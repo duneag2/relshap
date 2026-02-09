@@ -1,0 +1,86 @@
+# =========================
+# Data handling
+# =========================
+
+# LABEL_COLS: the actual ML target
+LABEL_COL:
+  - ACTION
+#JWMNP #MIG #PUBCOV #"ESR" #"ESR"PINCP  # "y" #inPhase # review_score #supplier_risk
+DROP_COLS:
+  # - User_ID
+  # - Product_ID
+  # - RowNumber
+  # - CustomerId
+  # - Surname
+  # - SERIALNO
+  # - SPORDER
+  # - ST
+  # - customer_id
+  # - order_id
+  # - top_tier
+  # - top_unit_price
+  # - n_items
+  # - region
+  # - currency
+  # - channel
+  # - total_qty
+  # - order_total
+
+PROVENANCE_THRESHOLD: 1 # exact mode
+
+
+# SAMPLE_N = None  # 200000
+# - Use null for Python None
+SAMPLE_N: null
+
+# RANDOM_SEED = 0
+RANDOM_SEED: 0
+
+
+# =========================
+# FD / key profiling
+# =========================
+
+# unique key candidates size
+MAX_KEY_SIZE: 1
+
+# FD lhs combinations up to size ~
+# Recommended: 2
+MAX_LHS_SIZE: 2 #2 usually
+
+# near-FD threshold on group-violation rate
+# violating_ratio: violating_rows/total_rows
+# approx_error (FD_EPS): violating_groups/total_groups
+FD_EPS: 0.01
+
+
+# =========================
+# Domain constraint
+# =========================
+
+# numeric col with nunique <= this treated as categorical (unless ID-like)
+CAT_MAX_UNIQUE: 30
+
+# if nunique/nrows >= this, treat as ID-like (exclude from domain constraints)
+ID_UNIQUE_FRAC: 0.2
+
+# only build constraint when conditioning categorical (rhs in inverse) has small domain
+MAX_RHS_DOMAIN: 20
+
+# cate-cate allowed(lhs | rhs=v) must be <= this
+MAX_ALLOWED_SET: 20
+
+# per category value count must be >= this to build constraint rows
+MIN_GROUP_SUPPORT: 30
+
+# USE_QUANTILES_FOR_CONTI_CATE = False
+USE_QUANTILES_FOR_CONTI_CATE: false
+
+# Q_LO, Q_HI = 0.005, 0.995
+Q_LO: 0.005
+Q_HI: 0.995
+
+ID_NAME_TOKENS:
+  - "id"
+  - "uuid"
+  - "code"

@@ -1,0 +1,2 @@
+SELECT * FROM Pima
+ORDER BY row_id;
