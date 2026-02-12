@@ -10,7 +10,6 @@ SELECT
   (o.order_delivered_customer_date - o.order_estimated_delivery_date) AS late_interval,
   CASE WHEN o.order_delivered_customer_date > o.order_estimated_delivery_date THEN 1 ELSE 0 END AS is_late,
 
-  -- customer attrs
   c.customer_state,
   c.customer_city,
   c.customer_zip_code_prefix,
