@@ -3423,7 +3423,7 @@ def main():
     parser.add_argument("--base-mode", type=str, default="kernel", choices=["kernel", "mc", "leverage"])
 
     parser.add_argument("--mode-bg", action="store_true")
-    parser.add_argument("--bg-lut", type=str, help="background sample lookup table")
+    parser.add_argument("--bg-lut", type=str, required=True, help="background sample lookup table")
 
     # coalition options (mutually exclusive; require bg)
     parser.add_argument("--mode-coalition-memoization", action="store_true")
@@ -3514,15 +3514,10 @@ def main():
     else:
         domain_num_mode = None
 
-    if args.mode_bg:
-        bg_lut = args.bg_lut or "train"
-    else:
-        bg_lut = None
-
     if args.mode_domain_numerical is not None and not args.mode_domain:
         raise ValueError("--mode-domain-numerical requires --mode-domain.")
 
-
+    bg_lut = str(args.bg_lut)
     DEBUG = bool(args.debug)
     DBG_LIM = int(args.debug_lim)
     DBG_EVERY = max(1, int(args.debug_every))

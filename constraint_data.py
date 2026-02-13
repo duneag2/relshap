@@ -92,11 +92,11 @@ def maybe_sample(df: pd.DataFrame, n: Optional[int], seed: int) -> pd.DataFrame:
 def _lhs_str(cols: Tuple[str, ...]) -> str:
     return ",".join(sorted(cols))
 
-def _load_csv(csv_path: str, lut: str, config_path: str, seed) -> pd.DataFrame:
+def _load_csv(csv_path: str, discovery: str, config_path: str, seed) -> pd.DataFrame:
     df = pd.read_csv(csv_path, low_memory=False)
-    if lut == 'full':
+    if discovery == 'full':
         pass
-    elif lut == 'train':
+    elif discovery == 'train':
         with open(config_path, "r") as f:
             config = yaml.safe_load(f) or {}
 
@@ -770,8 +770,8 @@ def build_integrity_constraints(df: pd.DataFrame, fd_exact: pd.DataFrame) -> pd.
 # =========================
 # Main
 # =========================
-def run_all(csv_path: str, lut: str, config_path: str, seed, exclude_pairs: Optional[set] = None,) -> Dict[str, pd.DataFrame]:
-    df = _load_csv(csv_path, lut, config_path, seed)
+def run_all(csv_path: str, discovery: str, config_path: str, seed, exclude_pairs: Optional[set] = None,) -> Dict[str, pd.DataFrame]:
+    df = _load_csv(csv_path, discovery, config_path, seed)
     # print(df)
     exclude_pairs = exclude_pairs or set()
 
@@ -812,7 +812,7 @@ if __name__ == "__main__":
     parser.add_argument("--approx-fd", type=str, required=True, help="approximate fd csv")
     parser.add_argument("--domain-constraint-d", required=True, help="domain constraint csv")
     parser.add_argument("--denial-constraint-d", required=True, help="denial constraint csv")
-    parser.add_argument("--lut", required=True, help="lookup table")
+    parser.add_argument("--discovery", required=True, help="discovery range (train or full)")
     parser.add_argument("--seed", required=True, help="seed")
 
     args = parser.parse_args()
@@ -827,7 +827,7 @@ if __name__ == "__main__":
     apply_config(cfg)
     
     excluded = load_excluded_fd_pairs_multi(args.fd_exclude, args.base_dir)
-    results = run_all(csv_path, str(args.lut), config_path, int(args.seed), exclude_pairs=excluded,)
+    results = run_all(csv_path, str(args.discovery), config_path, int(args.seed), exclude_pairs=excluded,)
 
     print("\n")
     print("FD")

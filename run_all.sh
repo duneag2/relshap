@@ -37,6 +37,9 @@ DOMAIN_Q="conditional_domain_constraint_q.csv"
 DOMAIN_CONSTRAINT_D="domain_constraint.csv"
 DENIAL_CONSTRAINT_D="denial_constraint.csv"
 
+DISCOVERY="train" # train or full
+LUT="train" # train or full
+
 CONSTRAINTS_CACHE="constraints_cache.pkl"
 CONSTRAINTS_FINAL="constraints_final.csv"
 
@@ -75,7 +78,7 @@ python constraint_query.py \
   2> "$LOG_DIR/constraint_query.err"
 
 # extract constraints from the data itself
-# lut (lookup table): full or train
+# discovery: full or train (to avoid any potential leakages)
 python constraint_data.py \
   --base-dir "$BASE_DIR" \
   --flattened "$FLATTENED" \
@@ -84,7 +87,7 @@ python constraint_data.py \
   --approx-fd "$APPROX_FD" \
   --domain-constraint-d "$DOMAIN_CONSTRAINT_D" \
   --denial-constraint-d "$DENIAL_CONSTRAINT_D" \
-  --lut train \
+  --discovery "$DISCOVERY" \
   --seed "$SEED" \
   > "$LOG_DIR/constraint_data.out" \
   2> "$LOG_DIR/constraint_data.err"
@@ -176,6 +179,7 @@ python -u run_relshap.py \
   --explain-n 100 \
   --nsamples 100 \
   --base-mode mc \
+  --bg-lut "$LUT" \
   --mode-provenance bg-coalition-memoization \
   --prov-strength strong \
   --debug \
