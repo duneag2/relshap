@@ -3130,9 +3130,9 @@ class RelShapKernelExplainer(KernelExplainer):
         do_stage2 = (self.provenance_mode in ("bg-coalition-memoization", "bg-coalition-quotient"))
         if do_stage2:
             if self.provenance_mode == "bg-coalition-memoization" and not self.mode_coal_memo:
-                return None
+                do_stage2 = False
             if self.provenance_mode == "bg-coalition-quotient" and not self.mode_coal_quotient:
-                return None
+                do_stage2 = False
             canon_cols = tuple(sorted(self.feature_names[i] for i in np.where(m == 1)[0]))
             self.closure_cache.remember_class(canon_cols)
             
@@ -3423,6 +3423,7 @@ def main():
     parser.add_argument("--base-mode", type=str, default="kernel", choices=["kernel", "mc", "leverage"])
 
     parser.add_argument("--mode-bg", action="store_true")
+    parser.add_argument("--bg-lut", type=str, help="background sample lookup table")
 
     # coalition options (mutually exclusive; require bg)
     parser.add_argument("--mode-coalition-memoization", action="store_true")
@@ -3512,6 +3513,11 @@ def main():
         domain_num_mode = args.mode_domain_numerical or "minimal_edit"
     else:
         domain_num_mode = None
+
+    if args.mode_bg:
+        bg_lut = args.bg_lut or "train"
+    else:
+        bg_lut = None
 
     if args.mode_domain_numerical is not None and not args.mode_domain:
         raise ValueError("--mode-domain-numerical requires --mode-domain.")
@@ -3622,7 +3628,7 @@ def main():
 
 
     # =========================================================
-    # Background selection (with optional domain/denial filtering)  [NEW]
+    # Background selection
     # =========================================================
     ic_payload = None
     cache_path = None
@@ -3662,7 +3668,10 @@ def main():
         if args.mode_denial:
             enabled.append("--mode-denial")
 
-    bg = X_train.sample(min(args.background_n, len(X_train)), random_state=SEED)
+    if bg_lut == 'train':
+        bg = X_train.sample(min(args.background_n, len(X_train)), random_state=SEED)
+    elif bg_lut == 'full':
+        bg = X.sample(min(args.background_n, len(X)), random_state=SEED)
     ex = X_test.sample(min(args.explain_n, len(X_test)), random_state=SEED)
 
     # =========================================================

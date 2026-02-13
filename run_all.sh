@@ -84,7 +84,7 @@ python constraint_data.py \
   --approx-fd "$APPROX_FD" \
   --domain-constraint-d "$DOMAIN_CONSTRAINT_D" \
   --denial-constraint-d "$DENIAL_CONSTRAINT_D" \
-  --lut full \
+  --lut train \
   --seed "$SEED" \
   > "$LOG_DIR/constraint_data.out" \
   2> "$LOG_DIR/constraint_data.err"
@@ -147,6 +147,8 @@ python -u run_model.py \
 # (no runtime improvement, runtime similar to the vanilla mode)
 # --mode-domain: uses domain constraints
 # --mode-denial: uses denial constraints
+
+# --bg-lut: lookup table for background sampling (train or full), need to specify when enabling --mode-bg
 
 # --mode-provenance: provenance mode enabled
 # "bg-only", "bg-coalition-memoization", "bg-coalition-quotient" >> three options available
