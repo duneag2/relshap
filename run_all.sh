@@ -21,7 +21,7 @@ DB="$DATASET.duckdb" # Do not support CTEs; Use QUALIFY in the duckdb dialect
 QUERY="$DATASET.sql"
 FLATTENED="flattened_$DATASET.csv"
 CONFIG="config.yaml"
-MODEL="randomforest"
+MODEL="xgboost"
 # models available:
 # ML-side: logreg, svm, randomforest, xgboost, lightgbm
 # DL-side: mlp, mlp_plr, ft_transformer, tabpfn
@@ -75,6 +75,7 @@ python constraint_query.py \
   2> "$LOG_DIR/constraint_query.err"
 
 # extract constraints from the data itself
+# lut (lookup table): full or train
 python constraint_data.py \
   --base-dir "$BASE_DIR" \
   --flattened "$FLATTENED" \
@@ -83,6 +84,8 @@ python constraint_data.py \
   --approx-fd "$APPROX_FD" \
   --domain-constraint-d "$DOMAIN_CONSTRAINT_D" \
   --denial-constraint-d "$DENIAL_CONSTRAINT_D" \
+  --lut full \
+  --seed "$SEED" \
   > "$LOG_DIR/constraint_data.out" \
   2> "$LOG_DIR/constraint_data.err"
 
@@ -116,7 +119,7 @@ python fd_ic_refinement.py \
 # run ML/DL models and save them
 python -u run_model.py \
   --base-dir "$BASE_DIR" \
-  --seed "$SEED"\
+  --seed "$SEED" \
   --flattened "$FLATTENED" \
   --config "$CONFIG" \
   --model $MODEL \

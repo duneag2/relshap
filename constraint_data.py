@@ -7,6 +7,8 @@ import yaml
 import pandas as pd
 from collections import defaultdict
 
+from sklearn.model_selection import train_test_split
+
 def load_config(yaml_path: str) -> Dict:
     with open(yaml_path, "r") as f:
         cfg = yaml.safe_load(f)
@@ -90,8 +92,28 @@ def maybe_sample(df: pd.DataFrame, n: Optional[int], seed: int) -> pd.DataFrame:
 def _lhs_str(cols: Tuple[str, ...]) -> str:
     return ",".join(sorted(cols))
 
-def _load_csv(csv_path: str) -> pd.DataFrame:
+def _load_csv(csv_path: str, lut: str, config_path: str, seed) -> pd.DataFrame:
     df = pd.read_csv(csv_path, low_memory=False)
+    if lut == 'full':
+        pass
+    elif lut == 'train':
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f) or {}
+
+        label_col = list(config.get("LABEL_COL", []))
+        if not label_col:
+            raise ValueError("LABEL_COL is missing in config YAML.")
+
+        drop_cols = list(config.get("DROP_COLS") or [])
+        
+        X = df.drop(columns=label_col+drop_cols, errors="raise")
+        y = df[label_col].to_numpy().ravel()
+        SEED = seed
+
+        X_train, _, _, _ = train_test_split(X, y, test_size=0.2, random_state=SEED, stratify=y)
+        
+        df = X_train
+
     for c in LABEL_COL:
         if c in df.columns:
             df = df.drop(columns=[c])
@@ -748,8 +770,8 @@ def build_integrity_constraints(df: pd.DataFrame, fd_exact: pd.DataFrame) -> pd.
 # =========================
 # Main
 # =========================
-def run_all(csv_path: str, exclude_pairs: Optional[set] = None) -> Dict[str, pd.DataFrame]:
-    df = _load_csv(csv_path)
+def run_all(csv_path: str, lut: str, config_path: str, seed, exclude_pairs: Optional[set] = None,) -> Dict[str, pd.DataFrame]:
+    df = _load_csv(csv_path, lut, config_path, seed)
     # print(df)
     exclude_pairs = exclude_pairs or set()
 
@@ -790,6 +812,8 @@ if __name__ == "__main__":
     parser.add_argument("--approx-fd", type=str, required=True, help="approximate fd csv")
     parser.add_argument("--domain-constraint-d", required=True, help="domain constraint csv")
     parser.add_argument("--denial-constraint-d", required=True, help="denial constraint csv")
+    parser.add_argument("--lut", required=True, help="lookup table")
+    parser.add_argument("--seed", required=True, help="seed")
 
     args = parser.parse_args()
     csv_path = os.path.join(args.base_dir, args.flattened)
@@ -803,8 +827,7 @@ if __name__ == "__main__":
     apply_config(cfg)
     
     excluded = load_excluded_fd_pairs_multi(args.fd_exclude, args.base_dir)
-    results = run_all(csv_path, exclude_pairs=excluded)
-
+    results = run_all(csv_path, str(args.lut), config_path, int(args.seed), exclude_pairs=excluded,)
 
     print("\n")
     print("FD")
