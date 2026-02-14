@@ -1549,8 +1549,8 @@ class ClosureCache:
 # =========================================================
 # RelShapKernelExplainer
 #   - mode-bg: apply closure to mask
-#   - coalition-memoization: memoize model eval by canon mask key in run()
-#   - coalition-quotient: drop duplicate canon masks at addsample time
+#   - coalition-canon
+#   - coalition-budget
 # =========================================================
 class RelShapKernelExplainer(KernelExplainer):
     def __init__(
@@ -1560,9 +1560,9 @@ class RelShapKernelExplainer(KernelExplainer):
         *,
         feature_names: List[str],
         mode_bg: bool,
-        mode_coal_memo: bool,
-        mode_coal_quotient: bool,
-        quotient_max_skips: int,
+        mode_coal_canon: bool,
+        mode_coal_budget: bool,
+        budget_max_skips: int,
         closure_cache: Optional[ClosureCache],
         provenance_mode: Optional[str],  # None or one of choices
         provenance_threshold: int,
@@ -1589,9 +1589,9 @@ class RelShapKernelExplainer(KernelExplainer):
 
 
         self.mode_bg = bool(mode_bg)
-        self.mode_coal_memo = bool(mode_coal_memo)
-        self.mode_coal_quotient = bool(mode_coal_quotient)
-        self.quotient_max_skips = int(quotient_max_skips)
+        self.mode_coal_canon = bool(mode_coal_canon)
+        self.mode_coal_budget = bool(mode_coal_budget)
+        self.budget_max_skips = int(budget_max_skips)
         self.closure_cache = closure_cache
 
         self.debug = int(debug)
@@ -1602,7 +1602,7 @@ class RelShapKernelExplainer(KernelExplainer):
         self._ic_repair_fn = None
         self._ic_feature_cols = list(feature_names)
 
-        self.provenance_mode = provenance_mode  # None / "bg_only" / "bg-coalition-memoization" / "bg-coalition-quotient"
+        self.provenance_mode = provenance_mode  # None / "bg_only" / "bg-coalition-canon" / "bg-coalition-budget"
         self.mode_provenance = (provenance_mode is not None)
         self.prov_threshold = int(provenance_threshold)
 
@@ -1615,26 +1615,25 @@ class RelShapKernelExplainer(KernelExplainer):
         if self.prov_strength not in ("strong", "weak"):
             raise ValueError(f"prov_strength must be 'strong' or 'weak', got {self.prov_strength}")
 
-        if (self.mode_coal_memo or self.mode_coal_quotient) and not self.mode_bg:
+        if (self.mode_coal_canon or self.mode_coal_budget) and not self.mode_bg:
             raise ValueError("Coalition modes require mode_bg=True.")
-        if self.mode_coal_memo and self.mode_coal_quotient:
-            raise ValueError("Choose only one: memoization OR quotient.")
+        if self.mode_coal_canon and self.mode_coal_budget:
+            raise ValueError("Choose only one: canon OR budget.")
 
 
         # stats
         self._canon_count: Dict[bytes, int] = defaultdict(int)  # keyed by canon mask key
-        self._quotient_skipped = 0
+        self._budget_skipped = 0
 
-        # used for quotient sampling
+        # used for canon sampling
         self._seen_canon_mask_keys: Set[bytes] = set()
 
-        # used for memoization at run()
         self._eval_cache: Dict[bytes, np.ndarray] = {}
         self._eval_cache_hits = 0
         self._eval_cache_misses = 0
 
-        # desired #samples to actually ADD in quotient mode (not attempts)
-        self._quotient_desired_nsamples: Optional[int] = None
+        # desired #samples to actually ADD in budget mode (not attempts)
+        self._budget_desired_nsamples: Optional[int] = None
 
         self._feat_arr = np.asarray(self.feature_names, dtype=object)
         self._col_to_i_cache = {}
@@ -1658,33 +1657,33 @@ class RelShapKernelExplainer(KernelExplainer):
         self._prov_cache = {}
         self._x_canon = None
 
-        if self.mode_coal_quotient:
+        if self.mode_coal_budget:
             self._seen_canon_mask_keys = set()
-            self._quotient_skipped = 0
+            self._budget_skipped = 0
 
             # --- Option A: keep trying until nsamplesAdded reaches user's nsamples ---
             ns = kwargs.get("nsamples", None)
             if ns is None:
-                raise ValueError("[mode-coalition-quotient] requires an explicit nsamples int (not None).")
+                raise ValueError("[mode-coalition-budget] requires an explicit nsamples int (not None).")
 
             # shap sometimes uses "auto"; we enforce int for safety
             if not isinstance(ns, int):
-                raise ValueError(f"[mode-coalition-quotient] nsamples must be int, got {type(ns)}: {ns}")
+                raise ValueError(f"[mode-coalition-budget] nsamples must be int, got {type(ns)}: {ns}")
 
-            self._quotient_desired_nsamples = int(ns)
+            self._budget_desired_nsamples = int(ns)
 
-            # Inflate attempts so that even if we skip up to quotient_max_skips,
+            # Inflate attempts so that even if we skip up to budget_max_skips,
             # we can still ADD desired_nsamples.
             M = len(self.feature_names)
             max_masks = (1 << M) - 2              # 2^M - 2
-            attempts = int(ns) + int(self.quotient_max_skips)
+            attempts = int(ns) + int(self.budget_max_skips)
             kwargs["nsamples"] = min(attempts, max_masks - 1)  # 전수조사 트리거 피하려고 -1
 
         try:
             return super().explain(*args, **kwargs)
         finally:
-            if self.mode_coal_quotient:
-                self._quotient_desired_nsamples = None
+            if self.mode_coal_budget:
+                self._budget_desired_nsamples = None
 
     def shap_values(self, X, *args, **kwargs):
         # remove the reset here (or leave it, but per-instance reset is what matters)
@@ -1694,7 +1693,7 @@ class RelShapKernelExplainer(KernelExplainer):
         """Monte Carlo (coalition-sampling) Shapley estimator (KernelSHAP drop-in).
 
         Keeps existing RelShap behaviors (FD closure, provenance expansion,
-        IC repair, coalition memoization/quotient debug stats) but replaces the
+        IC repair, coalition canon/budget debug stats) but replaces the
         KernelSHAP weighted-regression solver with a coalition-sampling MC estimator.
 
         Interpretation of `nsamples`: number of coalition samples per row.
@@ -1862,11 +1861,11 @@ class RelShapKernelExplainer(KernelExplainer):
 
         def _model_eval_mean_over_bg(mask: np.ndarray, x_full: np.ndarray) -> float:
             """v(S): mean_{z in BG} f(z with S from x_full), with optional IC repair.
-            Memoized per instance by canonical mask key.
+            canonical mask key.
             """
             key = _mask_key(mask)
 
-            if self.mode_coal_memo:
+            if self.mode_coal_canon:
                 if key in self._eval_cache:
                     self._eval_cache_hits += 1
                     return float(self._eval_cache[key])
@@ -1892,7 +1891,7 @@ class RelShapKernelExplainer(KernelExplainer):
             pred = np.asarray(pred).reshape(-1)
             v = float(np.mean(pred))
 
-            if self.mode_coal_memo:
+            if self.mode_coal_canon:
                 self._eval_cache[key] = v
             return v
 
@@ -1906,13 +1905,13 @@ class RelShapKernelExplainer(KernelExplainer):
             # reset per-instance caches (matches original intent)
             self._prov_cache = {}
             self._x_canon = None
-            if self.mode_coal_memo:
+            if self.mode_coal_canon:
                 self._eval_cache = {}
                 self._eval_cache_hits = 0
                 self._eval_cache_misses = 0
-            if self.mode_coal_quotient:
+            if self.mode_coal_budget:
                 self._seen_canon_mask_keys = set()
-                self._quotient_skipped = 0
+                self._budget_skipped = 0
 
             x_full = np.asarray(X_np[row_i], dtype=bg_np.dtype, order="C")
             rng = np.random.RandomState(base_rng.randint(0, 2**31 - 1))
@@ -1920,8 +1919,8 @@ class RelShapKernelExplainer(KernelExplainer):
             phi = np.zeros(M, dtype=float)
 
             desired_add = ns
-            max_skips = int(self.quotient_max_skips) if self.mode_coal_quotient else 0
-            max_attempts = desired_add + max_skips if self.mode_coal_quotient else desired_add
+            max_skips = int(self.budget_max_skips) if self.mode_coal_budget else 0
+            max_attempts = desired_add + max_skips if self.mode_coal_budget else desired_add
 
             added = 0
             attempts = 0
@@ -1950,10 +1949,10 @@ class RelShapKernelExplainer(KernelExplainer):
                 mask_Si = _canonize_mask_from_cols(on_cols_plus, x_full)
                 # self._coal_record("mc_SUi", mask_Si)
 
-                if self.mode_coal_quotient:
+                if self.mode_coal_budget:
                     key_new = _mask_key(mask_Si)
                     if key_new in self._seen_canon_mask_keys:
-                        self._quotient_skipped += 1
+                        self._budget_skipped += 1
                         continue
                     self._seen_canon_mask_keys.add(key_new)
 
@@ -1973,14 +1972,14 @@ class RelShapKernelExplainer(KernelExplainer):
             denom = float(max(1, added))
             out[row_i, :] = phi / denom
 
-            if self.debug and self.mode_coal_memo:
+            if self.debug and self.mode_coal_canon:
                 self._dbg(
-                    f"[mc-coal] row={row_i} memo hits={self._eval_cache_hits} misses={self._eval_cache_misses} "
+                    f"[mc-coal] row={row_i} canon hits={self._eval_cache_hits} misses={self._eval_cache_misses} "
                     f"unique_masks={len(self._eval_cache)} added={added}/{ns}"
                 )
-            if self.debug and self.mode_coal_quotient:
+            if self.debug and self.mode_coal_budget:
                 self._dbg(
-                    f"[mc-coal] row={row_i} quotient skipped={self._quotient_skipped} "
+                    f"[mc-coal] row={row_i} budget skipped={self._budget_skipped} "
                     f"seen={len(self._seen_canon_mask_keys)} added={added}/{ns}"
                 )
         pbar_all.close()
@@ -2002,12 +2001,12 @@ class RelShapKernelExplainer(KernelExplainer):
             - ONLY change coalition mask via FD closure / provenance expansion hooks
             - top-up sampling if canonicalization makes unusable edge masks (|S| in {0,M})
 
-        2) --mode-bg + --mode-coalition-memoization:
+        2) --mode-bg + --mode-coalition-canon:
             - same canonicalization
             - reduce by canonical key (collapse); sum kernel weights per key
             - evaluate v(S) once per key (plus eval cache)
 
-        3) --mode-bg + --mode-coalition-quotient:
+        3) --mode-bg + --mode-coalition-budget:
             - same canonicalization
             - enforce UNIQUE canonical keys; top-up until exactly nsamples unique usable keys
 
@@ -2151,10 +2150,10 @@ class RelShapKernelExplainer(KernelExplainer):
                         if len(added) > 8:
                             because += " ..."
 
-                        if getattr(self, "mode_coal_memo", False):
-                            fd_tag = "[FD|COAL-MEMO]"
-                        elif getattr(self, "mode_coal_quotient", False):
-                            fd_tag = "[FD|COAL-QUOT]"
+                        if getattr(self, "mode_coal_canon", False):
+                            fd_tag = "[FD|COAL-CANON]"
+                        elif getattr(self, "mode_coal_budget", False):
+                            fd_tag = "[FD|COAL-BUDGET]"
                         else:
                             fd_tag = "[FD|BG-ONLY]"
 
@@ -2330,7 +2329,7 @@ class RelShapKernelExplainer(KernelExplainer):
         def _v_mean_bg(mask: np.ndarray, x_full: np.ndarray) -> float:
             key = _mask_key(mask)
 
-            if getattr(self, "mode_coal_memo", False):
+            if getattr(self, "mode_coal_canon", False):
                 if key in self._eval_cache:
                     self._eval_cache_hits += 1
                     return float(self._eval_cache[key])
@@ -2349,7 +2348,7 @@ class RelShapKernelExplainer(KernelExplainer):
 
             v = float(np.mean(_pred_batch(batch)))
 
-            if getattr(self, "mode_coal_memo", False):
+            if getattr(self, "mode_coal_canon", False):
                 self._eval_cache[key] = v
             return v
 
@@ -2370,13 +2369,13 @@ class RelShapKernelExplainer(KernelExplainer):
             # IMPORTANT: reset caches per explicand (mirrors your MC logic)
             self._prov_cache = {}
             self._x_canon = None
-            if getattr(self, "mode_coal_memo", False):
+            if getattr(self, "mode_coal_canon", False):
                 self._eval_cache = {}
                 self._eval_cache_hits = 0
                 self._eval_cache_misses = 0
-            if getattr(self, "mode_coal_quotient", False):
+            if getattr(self, "mode_coal_budget", False):
                 self._seen_canon_mask_keys = set()
-                self._quotient_skipped = 0
+                self._budget_skipped = 0
 
             x_full = np.asarray(X_np[row_i]).reshape(-1)
 
@@ -2389,8 +2388,8 @@ class RelShapKernelExplainer(KernelExplainer):
             v1 = _v_mean_bg(mask_full, x_full)
 
             want_bg = bool(getattr(self, "mode_bg", False))
-            want_memo = bool(getattr(self, "mode_coal_memo", False))
-            want_quot = bool(getattr(self, "mode_coal_quotient", False))
+            want_canon = bool(getattr(self, "mode_coal_canon", False))
+            want_budget = bool(getattr(self, "mode_coal_budget", False))
 
             # ------------------------------------------------------------
             # Step 1: collect coalitions
@@ -2407,9 +2406,9 @@ class RelShapKernelExplainer(KernelExplainer):
                 probs_raw.append(float(prob))
                 keys.append(key)
 
-            # FAST PATH: if NO mode-bg / NO memo / NO quotient / NO provenance
+            # FAST PATH: if NO mode-bg / NO canon / NO budget / NO provenance
             # -> still BG expectation, but sampling is one-shot (no top-up)
-            if (not want_bg) and (not want_memo) and (not want_quot) and (not getattr(self, "mode_provenance", False)):
+            if (not want_bg) and (not want_canon) and (not want_budget) and (not getattr(self, "mode_provenance", False)):
                 sampler = _CoalitionSampler(
                     n_players=M,
                     sampling_weights=sampling_weights,
@@ -2436,11 +2435,10 @@ class RelShapKernelExplainer(KernelExplainer):
 
             else:
                 # GENERAL PATH: supports mode-bg canonicalization + top-up for edgecases,
-                # and (optionally) quotient uniqueness.
                 seen = set()
                 n_dup_skipped = 0
                 n_edge_skipped = 0
-                max_skips = int(getattr(self, "quotient_max_skips", 0)) if want_quot else 0
+                max_skips = int(getattr(self, "budget_max_skips", 0)) if want_budget else 0
 
                 total_drawn = 0
                 max_total_draws = max(10 * ns, ns + 20000)
@@ -2483,14 +2481,14 @@ class RelShapKernelExplainer(KernelExplainer):
 
                         key = _mask_key(mask)
 
-                        if want_quot:
+                        if want_budget:
                             if key in seen:
                                 n_dup_skipped += 1
                                 if n_dup_skipped > max_skips:
                                     raise RuntimeError(
-                                        f"[mode-coalition-quotient][leverage] too many duplicates skipped "
-                                        f"({n_dup_skipped} > quotient_max_skips={max_skips}). "
-                                        f"Increase --quotient-max-skips or lower nsamples."
+                                        f"[mode-coalition-budget][leverage] too many duplicates skipped "
+                                        f"({n_dup_skipped} > budget_max_skips={max_skips}). "
+                                        f"Increase --budget-max-skips or lower nsamples."
                                     )
                                 continue
                             seen.add(key)
@@ -2503,13 +2501,13 @@ class RelShapKernelExplainer(KernelExplainer):
                 if len(masks) < ns:
                     raise RuntimeError(
                         f"[leverage] unable to collect enough usable samples: got {len(masks)} / {ns}. "
-                        f"(edge_skipped={n_edge_skipped}, want_quot={want_quot}, max_skips={max_skips}, total_drawn={total_drawn})."
+                        f"(edge_skipped={n_edge_skipped}, want_budget={want_budget}, max_skips={max_skips}, total_drawn={total_drawn})."
                     )
 
             # ------------------------------------------------------------
-            # Step 2: reduction (ONLY for memoization mode, and ONLY when quotient is not already unique)
+            # Step 2: reduction (ONLY for canon mode, and ONLY when budget mode is not already unique)
             # ------------------------------------------------------------
-            if want_memo and (not want_quot):
+            if want_canon and (not want_budget):
                 mask_map = {}
                 size_map = {}
                 w_total = {}
@@ -2777,7 +2775,7 @@ class RelShapKernelExplainer(KernelExplainer):
 
         on_set = set(self.feature_names[i] for i in np.flatnonzero(m))
 
-        do_stage2 = (self.provenance_mode in ("bg-coalition-memoization", "bg-coalition-quotient"))
+        do_stage2 = (self.provenance_mode in ("bg-coalition-canon", "bg-coalition-budget"))
         if do_stage2:
             for idc in self.prov_index.det_cols.keys():
                 got = best_key_for_id_strong(idc, threshold=thr, on_set_local=on_set)
@@ -2943,7 +2941,7 @@ class RelShapKernelExplainer(KernelExplainer):
           1) compute raw_key from mask
           2) compute closure(raw) -> canon set
           3) apply canon to mask (valid-world)
-          4) if quotient: drop duplicate canon masks
+          4) if budget: drop duplicate canon masks
           5) proceed with super().addsample
         """
 
@@ -3019,10 +3017,10 @@ class RelShapKernelExplainer(KernelExplainer):
                         rule_reasons.append(f"(unknown_lhs) -> {rhs}")
 
                 because = "FD: " + " ; ".join(rule_reasons) + (" ..." if len(added) > 8 else "")
-                if self.mode_coal_memo:
-                    fd_tag = "[FD|COAL-MEMO]"
-                elif self.mode_coal_quotient:
-                    fd_tag = "[FD|COAL-QUOT]"
+                if self.mode_coal_canon:
+                    fd_tag = "[FD|COAL-CANON]"
+                elif self.mode_coal_budget:
+                    fd_tag = "[FD|COAL-BUDGET]"
                 else:
                     fd_tag = "[FD|BG-ONLY]"
 
@@ -3043,26 +3041,26 @@ class RelShapKernelExplainer(KernelExplainer):
             if _mask_key(m_before_prov) != _mask_key(m):
                 self._dbg(f"[addsample] prov expanded {_diff_cols([self.feature_names[i] for i in np.where(m_before_prov==1)[0]], [self.feature_names[i] for i in np.where(m==1)[0]])}")
 
-        if self.mode_coal_quotient and self._quotient_desired_nsamples is not None:
+        if self.mode_coal_budget and self._budget_desired_nsamples is not None:
             # nsamplesAdded is maintained by SHAP's addsample (super().addsample)
             cur_added = int(getattr(self, "nsamplesAdded", 0) or 0)
-            if cur_added >= self._quotient_desired_nsamples:
+            if cur_added >= self._budget_desired_nsamples:
                 return None
 
 
-        if self.mode_coal_quotient:
+        if self.mode_coal_budget:
             if canon_mask_key in self._seen_canon_mask_keys:
-                self._quotient_skipped += 1
+                self._budget_skipped += 1
                 if self.debug:
-                    self._dbg(f"[quotient] DUP skip={self._quotient_skipped} key_len={len(canon_mask_key)} cur_added={int(getattr(self,'nsamplesAdded',0) or 0)}")
-                if self._quotient_skipped > self.quotient_max_skips:
+                    self._dbg(f"[budget] DUP skip={self._budget_skipped} key_len={len(canon_mask_key)} cur_added={int(getattr(self,'nsamplesAdded',0) or 0)}")
+                if self._budget_skipped > self.budget_max_skips:
                     raise RuntimeError(
-                        f"[mode-coalition-quotient] too many duplicates skipped "
-                        f"({self._quotient_skipped} > quotient_max_skips={self.quotient_max_skips})."
+                        f"[mode-coalition-budget] too many duplicates skipped "
+                        f"({self._budget_skipped} > budget_max_skips={self.budget_max_skips})."
                     )
 
                 # offset (256 trials)
-                rng = np.random.RandomState(self.seed + self._quotient_skipped)  # deterministic-ish
+                rng = np.random.RandomState(self.seed + self._budget_skipped)  # deterministic-ish
                 for _try in range(256):  # for safety
                     m2 = self._rand_mask_like(rng)
 
@@ -3101,7 +3099,7 @@ class RelShapKernelExplainer(KernelExplainer):
 
 
                     if self.debug:
-                        self._dbg(f"[quotient] REPLACE try_ok raw2_key={list(raw2_key)} canon2_on={canon2[:12]}{'...' if len(canon2)>12 else ''}")
+                        self._dbg(f"[budget] REPLACE try_ok raw2_key={list(raw2_key)} canon2_on={canon2[:12]}{'...' if len(canon2)>12 else ''}")
 
 
                     # add the *replacement* sample using same x and w
@@ -3109,7 +3107,7 @@ class RelShapKernelExplainer(KernelExplainer):
 
                 # 256 trials -> no match then drop
                 if self.debug:
-                    self._dbg("[quotient] REPLACE failed after 256 tries -> drop this sample")
+                    self._dbg("[budget] REPLACE failed after 256 tries -> drop this sample")
 
                 return None
 
@@ -3127,11 +3125,11 @@ class RelShapKernelExplainer(KernelExplainer):
 
 
         # class cache append (canon class) if coalition mode enabled
-        do_stage2 = (self.provenance_mode in ("bg-coalition-memoization", "bg-coalition-quotient"))
+        do_stage2 = (self.provenance_mode in ("bg-coalition-canon", "bg-coalition-budget"))
         if do_stage2:
-            if self.provenance_mode == "bg-coalition-memoization" and not self.mode_coal_memo:
+            if self.provenance_mode == "bg-coalition-canon" and not self.mode_coal_canon:
                 do_stage2 = False
-            if self.provenance_mode == "bg-coalition-quotient" and not self.mode_coal_quotient:
+            if self.provenance_mode == "bg-coalition-budget" and not self.mode_coal_budget:
                 do_stage2 = False
             canon_cols = tuple(sorted(self.feature_names[i] for i in np.where(m == 1)[0]))
             self.closure_cache.remember_class(canon_cols)
@@ -3161,7 +3159,7 @@ class RelShapKernelExplainer(KernelExplainer):
         """
         Safe composition:
         - optional IC mask-aware repair (protect x-side: mask==1 never modified)
-        - optional coalition memoization (block-wise cache by canon mask)
+        - optional coalition canon (block-wise cache by canon mask)
         Implemented with a SINGLE model.f swap to avoid recursive self-wrapping.
         """
         # --- grab internals ---
@@ -3214,8 +3212,7 @@ class RelShapKernelExplainer(KernelExplainer):
             fixed_cols_set_list = None
 
 
-        # ====== setup memoization (optional) ======
-        if self.mode_coal_memo:
+        if self.mode_coal_canon:
             self._eval_cache = {}
             self._eval_cache_hits = 0
             self._eval_cache_misses = 0
@@ -3367,7 +3364,7 @@ class RelShapKernelExplainer(KernelExplainer):
                     X_work = X_rep
 
                 # ---------- Memoization: evaluate per mask block ----------
-                if self.mode_coal_memo:
+                if self.mode_coal_canon:
                     out_blocks = []
                     for i, k in enumerate(keys):
                         start = i * n_bg
@@ -3383,7 +3380,6 @@ class RelShapKernelExplainer(KernelExplainer):
                         out_blocks.append(yb)
                     return np.concatenate(out_blocks, axis=0)
 
-                # ---------- No memo: evaluate whole batch ----------
                 return base_f(X_work)
 
             finally:
@@ -3398,8 +3394,8 @@ class RelShapKernelExplainer(KernelExplainer):
             return ret
         finally:
             model_obj.f = base_f
-            if self.mode_coal_memo and self.debug:
-                self._dbg(f"[memo] hits={self._eval_cache_hits} misses={self._eval_cache_misses} unique_masks={len(self._eval_cache)}")
+            if self.mode_coal_canon and self.debug:
+                self._dbg(f"[canon] hits={self._eval_cache_hits} misses={self._eval_cache_misses} unique_masks={len(self._eval_cache)}")
 
 
 
@@ -3426,9 +3422,9 @@ def main():
     parser.add_argument("--bg-lut", type=str, required=True, help="background sample lookup table")
 
     # coalition options (mutually exclusive; require bg)
-    parser.add_argument("--mode-coalition-memoization", action="store_true")
-    parser.add_argument("--mode-coalition-quotient", action="store_true")
-    parser.add_argument("--quotient-max-skips", type=int, default=500)
+    parser.add_argument("--mode-coalition-canon", action="store_true")
+    parser.add_argument("--mode-coalition-budget", action="store_true")
+    parser.add_argument("--budget-max-skips", type=int, default=500)
 
     # NEW: IC modes (independent)
     parser.add_argument("--mode-domain", action="store_true")
@@ -3450,8 +3446,8 @@ def main():
         "--mode-provenance",
         type=str,
         default=None,
-        choices=["bg-only", "bg-coalition-memoization", "bg-coalition-quotient"],
-        help="Enable provenance refinement: bg-only | bg-coalition-memoization | bg-coalition-quotient",
+        choices=["bg-only", "bg-coalition-canon", "bg-coalition-budget"],
+        help="Enable provenance refinement: bg-only | bg-coalition-canon | bg-coalition-budget",
     )
 
     parser.add_argument(
@@ -3497,10 +3493,10 @@ def main():
     seed_everything(SEED)
 
     # enforce constraints
-    if (args.mode_coalition_memoization or args.mode_coalition_quotient) and not args.mode_bg:
+    if (args.mode_coalition_canon or args.mode_coalition_budget) and not args.mode_bg:
         raise ValueError("Coalition modes require --mode-bg.")
-    if args.mode_coalition_memoization and args.mode_coalition_quotient:
-        raise ValueError("Choose only one: --mode-coalition-memoization OR --mode-coalition-quotient")
+    if args.mode_coalition_canon and args.mode_coalition_budget:
+        raise ValueError("Choose only one: --mode-coalition-canon OR --mode-coalition-budget")
 
     # NEW: if domain/denial enabled, constraints-cache required (independent of mode-bg)
     if (args.mode_domain or args.mode_denial) and not args.constraints_cache:
@@ -3685,7 +3681,7 @@ def main():
         )
 
     else:
-        if args.mode_coalition_memoization or args.mode_coalition_quotient:
+        if args.mode_coalition_canon or args.mode_coalition_budget:
             # should be impossible due to earlier checks, but keep explicit
             raise ValueError("Coalition modes require --mode-bg.")
 
@@ -3770,8 +3766,8 @@ def main():
     if DEBUG:
         print("[modes] "
               f"mode_bg={args.mode_bg} "
-              f"coal_memo={args.mode_coalition_memoization} "
-              f"coal_quotient={args.mode_coalition_quotient} "
+              f"coal_canon={args.mode_coalition_canon} "
+              f"coal_budget={args.mode_coalition_budget} "
               f"provenance={args.mode_provenance} thr={prov_th} "
               f"IC_domain={args.mode_domain} IC_denial={args.mode_denial} "
               f"nsamples={args.nsamples} bg_n={bg.shape[0]} explain_n={ex.shape[0]} M={len(feature_cols)}")
@@ -3782,9 +3778,9 @@ def main():
         data=bg[feature_cols],
         feature_names=feature_cols,
         mode_bg=args.mode_bg,
-        mode_coal_memo=args.mode_coalition_memoization,
-        mode_coal_quotient=args.mode_coalition_quotient,
-        quotient_max_skips=args.quotient_max_skips,
+        mode_coal_canon=args.mode_coalition_canon,
+        mode_coal_budget=args.mode_coalition_budget,
+        budget_max_skips=args.budget_max_skips,
         closure_cache=closure_cache,
         link="identity",
         provenance_mode=args.mode_provenance,  # None or string

@@ -144,27 +144,30 @@ python -u run_model.py \
 
 # Modes below are for RelShap; if the rest is turned off, it does vanilla SHAP, MC, and LeverageSHAP
 # --mode-bg: if ON, do Relshap's background sampling
-# --mode-coalition-memoization: if ON, computes coalition equivalence class and reduces runtime
+# --mode-coalition-canon: if ON, computes coalition equivalence class and reduces runtime
 # (this requires --mode-bg to be ONs)
-# --mode-coalition-quotient: if ON, computes coalition equivalence class, and draw extra samples to offset the reduction
+# --mode-coalition-budget: if ON, computes coalition equivalence class, and draw extra samples to offset the reduction
 # (no runtime improvement, runtime similar to the vanilla mode)
-# --mode-domain: uses domain constraints
-# --mode-denial: uses denial constraints
 
 # --bg-lut: lookup table for background sampling (train or full), need to specify when enabling --mode-bg
 
 # --mode-provenance: provenance mode enabled
-# "bg-only", "bg-coalition-memoization", "bg-coalition-quotient" >> three options available
+# "bg-only", "bg-coalition-canon", "bg-coalition-budget" >> three options available
 # bg-only: RelShap's local background sampling through provenance mode
-# bg-coalition-memoization: RelShap's local background sampling through provenance mode + computes local coalition equivalence class and reduces runtime
-# bg-coalition-memoization: RelShap's local background sampling through provenance mode + computes local coalition equivalence class and draw extra samples to offset the reduction
+# bg-coalition-canon: RelShap's local background sampling through provenance mode + computes local coalition equivalence class and reduces runtime
+# bg-coalition-budget: RelShap's local background sampling through provenance mode + computes local coalition equivalence class and draw extra samples to offset the reduction
 # Note that this of course is independent of any modes listed above
 # --prov-strength: strong or weak
+
+# --mode-domain: for domain constraints
+# "bg-only", "bg-coalition-canon", "bg-coalition-budget" >> three options available
+# --mode-denial: for denial constraints
+# "bg-only", "bg-coalition-canon", "bg-coalition-budget" >> three options available
 
 # --debug: if the user wants to print out logs (this slightly increases the runtime)
 
 # To Joao: if you want to work on mode-provenance, 
-# --mode-provenance bg-only OR bg-coalition-memoization OR bg-coalition-quotient 
+# --mode-provenance bg-only OR bg-coalition-canon OR bg-coalition-budget 
 # --prov-strength strong OR weak 
 # only vary these two modes and keep the rest fixed
 
@@ -180,7 +183,7 @@ python -u run_relshap.py \
   --nsamples 100 \
   --base-mode mc \
   --bg-lut "$LUT" \
-  --mode-provenance bg-coalition-memoization \
+  --mode-provenance bg-coalition-canon \
   --prov-strength strong \
   --debug \
   --out "$TS" \
