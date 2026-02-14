@@ -149,6 +149,9 @@ python -u run_model.py \
 # --mode-coalition-budget: if ON, computes coalition equivalence class, and draw extra samples to offset the reduction
 # (no runtime improvement, runtime similar to the vanilla mode)
 
+# --mode-domain: domain constraints for background sampling only
+# --mode-denial: denial constraints for background sampling only
+
 # --bg-lut: lookup table for background sampling (train or full), need to specify when enabling --mode-bg
 
 # --mode-provenance: provenance mode enabled
@@ -158,11 +161,6 @@ python -u run_model.py \
 # bg-coalition-budget: RelShap's local background sampling through provenance mode + computes local coalition equivalence class and draw extra samples to offset the reduction
 # Note that this of course is independent of any modes listed above
 # --prov-strength: strong or weak
-
-# --mode-domain: for domain constraints
-# "bg-only", "bg-coalition-canon", "bg-coalition-budget" >> three options available
-# --mode-denial: for denial constraints
-# "bg-only", "bg-coalition-canon", "bg-coalition-budget" >> three options available
 
 # --debug: if the user wants to print out logs (this slightly increases the runtime)
 
