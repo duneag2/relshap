@@ -1949,22 +1949,29 @@ class RelShapKernelExplainer(KernelExplainer):
                 mask_Si = _canonize_mask_from_cols(on_cols_plus, x_full)
                 # self._coal_record("mc_SUi", mask_Si)
 
-                if self.mode_coal_budget:
-                    key_new = _mask_key(mask_Si)
-                    if key_new in self._seen_canon_mask_keys:
-                        self._budget_skipped += 1
-                        continue
-                    self._seen_canon_mask_keys.add(key_new)
-
-                v_S = _model_eval_mean_over_bg(mask_S, x_full)
-                v_Si = _model_eval_mean_over_bg(mask_Si, x_full)
+                key_S  = _mask_key(mask_S)
+                key_Si = _mask_key(mask_Si)
 
                 newly_on = np.flatnonzero((mask_Si == 1) & (mask_S == 0))
+                if newly_on.size == 0:
+                    continue   # do NOT count toward added
+
+                if self.mode_coal_budget:
+                    pair_key = (key_S, key_Si)
+                    if pair_key in self._seen_canon_mask_keys:
+                        self._budget_skipped += 1
+                        continue
+                    self._seen_canon_mask_keys.add(pair_key)
+
+                v_S  = _model_eval_mean_over_bg(mask_S, x_full)
+                v_Si = _model_eval_mean_over_bg(mask_Si, x_full)
+
                 delta = v_Si - v_S
                 if newly_on.size:
                     phi[newly_on] += delta / float(newly_on.size)
 
                 added += 1
+
             pbar_all.update(1)
 
             
