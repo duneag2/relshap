@@ -1,6 +1,6 @@
 
 SELECT
-  a.raw_row_id,
+  a.row_id,
 
   a.resource      AS RESOURCE,
   a.mgr_id        AS MGR_ID,
@@ -15,4 +15,4 @@ SELECT
 FROM amazon_employee_access a
 JOIN Role r
   ON a.role_code = r.role_code
-ORDER BY a.raw_row_id;
+ORDER BY a.row_id;

@@ -64,14 +64,14 @@ if os.path.exists(DB_PATH):
 con = duckdb.connect(DB_PATH)
 
 # -----------------------
-# RAW (raw_row_id를 우리가 만든다: 원본 row 순서 고정)
+# RAW (row_id를 우리가 만든다: 원본 row 순서 고정)
 # -----------------------
 con.register("raw_df", df_nolabel)
 con.execute("DROP TABLE IF EXISTS raw_amazon_employee_access;")
 con.execute("""
 CREATE TABLE raw_amazon_employee_access AS
 SELECT
-  row_number() OVER () - 1 AS raw_row_id,   -- 0..n-1 (df index와 맞추기 좋게)
+  row_number() OVER () - 1 AS row_id,   -- 0..n-1 (df index와 맞추기 좋게)
   *
 FROM raw_df;
 """)
@@ -104,7 +104,7 @@ WHERE ROLE_CODE IS NOT NULL;
 con.execute("DROP TABLE IF EXISTS amazon_employee_access;")
 con.execute("""
 CREATE TABLE amazon_employee_access (
-  raw_row_id   BIGINT PRIMARY KEY,  -- 원본 row 식별자 역할
+  row_id   BIGINT PRIMARY KEY,  -- 원본 row 식별자 역할
 
   resource      VARCHAR,
   mgr_id        VARCHAR,
@@ -122,7 +122,7 @@ CREATE TABLE amazon_employee_access (
 con.execute("""
 INSERT INTO amazon_employee_access
 SELECT
-  raw_row_id,
+  row_id,
 
   CAST(RESOURCE AS VARCHAR)      AS resource,
   CAST(MGR_ID AS VARCHAR)        AS mgr_id,
@@ -141,7 +141,7 @@ FROM raw_amazon_employee_access;
 # -----------------------
 flat_sql = r"""
 SELECT
-  a.raw_row_id,
+  a.row_id,
 
   a.resource      AS RESOURCE,
   a.mgr_id        AS MGR_ID,
@@ -156,7 +156,7 @@ SELECT
 FROM amazon_employee_access a
 JOIN Role r
   ON a.role_code = r.role_code
-ORDER BY a.raw_row_id;
+ORDER BY a.row_id;
 """
 
 with open(SQL_PATH, "w") as f:
@@ -170,27 +170,24 @@ flat = con.execute(flat_sql).fetchdf()
 # -----------------------
 # Attach label (ACTION) + 원본 row/col 순서 복원
 # -----------------------
-# raw_row_id = df index와 맞춰놨기 때문에, df의 원래 순서대로 안전하게 붙일 수 있음
+# row_id = df index와 맞춰놨기 때문에, df의 원래 순서대로 안전하게 붙일 수 있음
 flat["ACTION"] = df[LABEL_COL].to_numpy()
 
 flat_final = (
     flat
-    .set_index("raw_row_id")
-    .loc[np.arange(len(df))]     # 0..n-1 원본 순서
-    .reset_index(drop=True)
+    .set_index("row_id")
+    .loc[np.arange(len(df))]
+    .reset_index(drop=False)
 )
 
-cols_out = [c for c in df.columns if c in flat_final.columns]
-flat_final = flat_final[cols_out]
+cols_df = list(df.columns)
+flat_check = flat_final[cols_df]
 
-for col in flat_final.columns:
-    df[col] = df[col].astype(flat_final[col].dtype)
+for col in cols_df:
+    df[col] = df[col].astype(flat_check[col].dtype)
 
+assert df.equals(flat_check), "FINAL CHECK FAILED (with class)"
 
-print(df.columns)
-
-print(flat_final.columns)
-assert df.equals(flat_final), "FINAL CHECK FAILED (with class)"
-
-flat_final.to_csv(CSV_PATH, index=False)
-print("Saved")
+flat_save = flat_final[["row_id"] + cols_df]
+flat_save.to_csv(CSV_PATH, index=False)
+print("Saved (with row_id)")

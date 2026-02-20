@@ -1,4 +1,5 @@
 SELECT
+  c.customer_id,
   c.state,
   c.account_length,
   c.area_code,

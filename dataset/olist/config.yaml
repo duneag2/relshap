@@ -7,6 +7,8 @@ LABEL_COL:
   - review_score
 #JWMNP #MIG #PUBCOV #"ESR" #"ESR"PINCP  # "y" #inPhase # review_score #supplier_risk
 DROP_COLS:
+  - order_id
+  - review_id
   # - User_ID
   # - Product_ID
   # - RowNumber

@@ -10,6 +10,7 @@ DROP_COLS:
   # - User_ID
   # - Product_ID
   - RowNumber
+  - CustomerId
   # - CustomerId
   # - Surname
   # - SERIALNO

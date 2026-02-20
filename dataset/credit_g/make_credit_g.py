@@ -253,7 +253,8 @@ print("FINAL VERIFICATION PASSED (including class)")
 flat_final = flat_noid[df.columns]
 assert flat_final.shape == df.shape
 
-flat_final.to_csv(CSV_PATH, index=False)
+flat_save = flat_sorted[["app_id"]].join(flat_final)
+flat_save.to_csv(CSV_PATH, index=False)
 
 print("Saved flattened.csv with original row + column order")
 

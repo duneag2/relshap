@@ -6,8 +6,9 @@
 LABEL_COL:
   - class
 #JWMNP #MIG #PUBCOV #"ESR" #"ESR"PINCP  # "y" #inPhase # review_score #supplier_risk
-DROP_COLS:
-  - phone_number
+DROP_COLS: # may opt to drop phone_number (UNIQUE) but here they key (identifier) is customer_id
+  - customer_id
+  # - phone_number
   # - User_ID
   # - Product_ID
   # - RowNumber

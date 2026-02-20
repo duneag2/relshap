@@ -1021,7 +1021,7 @@ def build_bucket_rules_from_df(df: pd.DataFrame, d_prefix="d_") -> pd.DataFrame:
                 lab = vc.index[0]
             else:
                 lab = vc.index[0]
-                print(f"⚠️ WARNING: base={base} is NULL but {dcol} has multiple labels. "
+                print(f"WARNING: base={base} is NULL but {dcol} has multiple labels. "
                       f"Using mode={lab}. top5={vc.head(5).to_dict()}")
 
             rules.append({
@@ -1356,7 +1356,7 @@ for c in final_cols:
             bad_refs.append((c, e))
 if bad_refs:
     msg = "\n".join([f"- {c}: {e}" for c, e in bad_refs[:50]])
-    raise ValueError("❌ Upstream column(s) missing in views:\n" + msg)
+    raise ValueError("Upstream column(s) missing in views:\n" + msg)
 
 # Build final SELECT with stable order and clean formatting
 select_list = ",\n  ".join([f"{expr[c]} AS {qident(c)}" for c in final_cols])
@@ -1478,7 +1478,7 @@ flat_sorted.to_csv(CSV_PATH, columns=cols, index=False)
 
 
 
-FD_CSV = "./speeddating/fd_query_add.csv"
+FD_CSV = "./dataset/speeddating/fd_query_add.csv"
 
 fds = []
 

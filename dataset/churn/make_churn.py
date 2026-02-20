@@ -161,12 +161,15 @@ flat_sorted = flat.sort_values("phone_number").reset_index(drop=True)
 
 flat_sorted["class"] = df_sorted["class"].values
 
-for col in flat_sorted.columns:
-    df_sorted[col] = df_sorted[col].astype(flat_sorted[col].dtype)
+cols_check = [c for c in df_sorted.columns if c in flat_sorted.columns]
+df_check = df_sorted[cols_check].copy()
+flat_check = flat_sorted[cols_check].copy()
 
-assert df_sorted.equals(flat_sorted), "FINAL CHECK FAILED (with class)"
+for col in cols_check:
+    df_check[col] = df_check[col].astype(flat_check[col].dtype)
 
-print("FINAL VERIFICATION PASSED (including class)")
+assert df_check.equals(flat_check), "FINAL CHECK FAILED (excluding customer_id)"
+print("FINAL VERIFICATION PASSED (excluding customer_id)")
 
 flat_final = (
     flat_sorted
@@ -175,14 +178,14 @@ flat_final = (
     .reset_index()
 )
 
-flat_final = flat_final[df.columns]
+cols_save = list(df.columns)
+if "customer_id" in flat_final.columns and "customer_id" not in cols_save:
+    cols_save = ["customer_id"] + cols_save
 
-assert flat_final.shape == df.shape
+flat_save = flat_final[cols_save]
 
-flat_final.to_csv(CSV_PATH, index=False)
-
-print("Saved flattened.csv with original row + column order")
-
+flat_save.to_csv(CSV_PATH, index=False)
+print("Saved flattened.csv with original row + column order (customer_id kept)")
 
 
 # print(df_sorted.head(-5))

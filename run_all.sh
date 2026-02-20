@@ -8,7 +8,7 @@ export TABPFN_DISABLE_TELEMETRY=1
 # To Joao: use synth - xgboost for development purpose
 # You don't need to check other files; just check run_relshap.py
 
-DATASET="synth" 
+DATASET="synth"
 # ML-side datasets: acs, amazon_employee_access, churn, churn_modeling, credit_g, speeddating
 # DB-side datasets: movielens20m, olist, tpch, uwcse 
 # (Note. movielens20m and olist is not available in github since file is too large)

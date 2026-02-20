@@ -21,7 +21,7 @@ from sklearn.preprocessing import LabelEncoder
 
 import joblib
 import json
-from collections import deque
+from collections import deque, defaultdict
 from shap.explainers._kernel import KernelExplainer
 import math
 from scipy.special import comb as _binom
@@ -184,8 +184,9 @@ class ProvenanceIndex:
     rhs_const_map[rhs_feature] = True if rhs_feature is constant within that key group.
     """
 
-    def __init__(self, *, idcol_to_rhs, feature_cols, df_ref, drop_cols):
+    def __init__(self, *, idcol_to_rhs, idcol_to_rules, feature_cols, df_ref, drop_cols):
         self.idcol_to_rhs = {k: list(v) for k, v in idcol_to_rhs.items()}
+        self.idcol_to_rules = {k: list(v) for k, v in idcol_to_rules.items()}
         self.feature_cols = list(feature_cols)
         self.df_ref = df_ref
         self.drop_set = set(drop_cols)
@@ -197,6 +198,41 @@ class ProvenanceIndex:
         # col -> nunique
         self._nunique = {c: int(self.df_ref[c].nunique(dropna=False)) for c in self.feature_cols if c in self.df_ref.columns}
         self._build_det_cols()
+
+        # support composite id key for up to 2 drop_cols
+        self.drop_cols = list(drop_cols)
+
+        self.pair_idcol = None
+        if len(self.drop_cols) == 2:
+            a, b = self.drop_cols[0], self.drop_cols[1]
+            if (a in self.df_ref.columns) and (b in self.df_ref.columns):
+                pair_col = f"__pair__{a}__{b}"
+                self.pair_idcol = pair_col
+
+                # materialize composite id column as tuple(a,b)
+                if pair_col not in self.df_ref.columns:
+                    self.df_ref[pair_col] = list(zip(self.df_ref[a].tolist(), self.df_ref[b].tolist()))
+
+                # treat composite id as an additional drop identifier
+                self.drop_set.add(pair_col)
+
+                # union RHS and RULES from both ids so pair can expand masks too
+                rhs_union = []
+                rhs_union.extend(self.idcol_to_rhs.get(a, []))
+                rhs_union.extend(self.idcol_to_rhs.get(b, []))
+                # keep order but unique
+                seen = set()
+                rhs_union_unique = []
+                for x in rhs_union:
+                    if x not in seen:
+                        seen.add(x)
+                        rhs_union_unique.append(x)
+                self.idcol_to_rhs[pair_col] = rhs_union_unique
+
+                rules_union = []
+                rules_union.extend(self.idcol_to_rules.get(a, []))
+                rules_union.extend(self.idcol_to_rules.get(b, []))
+                self.idcol_to_rules[pair_col] = rules_union
 
 
     def _build_det_cols(self):
@@ -1341,10 +1377,14 @@ class ClosureCache:
             raise ValueError("payload['fd']['coalition_class_cache'] must be a dict if present")
 
         def _norm_map(d: dict) -> Dict[Tuple[str, ...], Tuple[str, ...]]:
+            def _norm_tuple(t):
+                return tuple(x.lower() if isinstance(x, str) else x for x in t)
+
             out: Dict[Tuple[str, ...], Tuple[str, ...]] = {}
             for k, v in d.items():
-                out[tuple(k)] = tuple(v)
+                out[_norm_tuple(k)] = _norm_tuple(v)
             return out
+
 
         self.base_cache = _norm_map(base_cc)
         self.bg_cache_disk = _norm_map(bg_cc)
@@ -1399,6 +1439,7 @@ class ClosureCache:
         self._rule_len = np.asarray([len(lhs) for lhs in self._rule_lhs], dtype=np.uint8)
 
     def lookup_bg(self, S_key: Tuple[str, ...]) -> Optional[Tuple[str, ...]]:
+        S_key = tuple(a.lower() if isinstance(a, str) else a for a in S_key)
         hit = self.base_cache.get(S_key)
         if hit is not None:
             return hit
@@ -1408,6 +1449,7 @@ class ClosureCache:
         return self.bg_appended_runtime.get(S_key)
 
     def lookup_class(self, canon_key: Tuple[str, ...]) -> Optional[Tuple[str, ...]]:
+        canon_key = tuple(a.lower() if isinstance(a, str) else a for a in canon_key)
         hit = self.class_cache_disk.get(canon_key)
         if hit is not None:
             return hit
@@ -1427,7 +1469,11 @@ class ClosureCache:
         # if hasattr(self, "_dbg") and callable(self._dbg):
         #     self._dbg(f"[closure] input |S|={len(S_key)} S={list(S_key)[:10]}{'...' if len(S_key)>10 else ''}")
         
-        current: Set[str] = set(S_key)
+        # current: Set[str] = set(S_key)
+        current: Set[str] = {
+            a.lower() if isinstance(a, str) else a
+            for a in S_key
+        }
         prov = defaultdict(list) if collect_prov else None
 
         R = len(self._rule_rhs)
@@ -2717,11 +2763,15 @@ class RelShapKernelExplainer(KernelExplainer):
                         if not (0 < ids_n <= thr):
                             continue
 
-                        rhs_list = [
-                            c for c in self.prov_index.idcol_to_rhs.get(idc, [])
-                            if (c in self.col2i)
-                        ]
-                        for rhs in rhs_list:
+                        rules = self.prov_index.idcol_to_rules.get(idc, [])
+                        for req_feats, _req_ids, rhs in rules:
+                            if rhs not in self.col2i:
+                                continue
+
+                            # NEW: gate by LHS ⊆ current mask
+                            if not set(req_feats).issubset(on_set):
+                                continue
+
                             j = self.col2i.get(rhs)
                             if j is None or m[j] == 1:
                                 continue
@@ -2733,7 +2783,14 @@ class RelShapKernelExplainer(KernelExplainer):
                                     f"(identified_by={list(key_cols)}, ids_n<=thr={thr})"
                                 )
                     else:
-                        for rhs in const_rhs0:
+                        rules = self.prov_index.idcol_to_rules.get(idc, [])
+                        for req_feats, _req_ids, rhs in rules:
+                            if rhs not in self.col2i:
+                                continue
+                            # LHS gating
+                            if not set(req_feats).issubset(on_set):
+                                continue
+
                             j = self.col2i.get(rhs)
                             if j is None or m[j] == 1:
                                 continue
@@ -2765,11 +2822,20 @@ class RelShapKernelExplainer(KernelExplainer):
             if got is None:
                 continue
             key_cols, cand_ids, const_rhs = got
-            rhs_list = [
-                c for c in self.prov_index.idcol_to_rhs.get(idc, [])
-                if (c in self.col2i)
-            ]
-            for rhs in rhs_list:
+            rules = self.prov_index.idcol_to_rules.get(idc, [])
+            for req_feats, req_ids, rhs in rules:
+                if rhs not in self.col2i:
+                    continue
+                # only use the rule if all required feature-determiners are ON in the mask
+                lhs_ok = set(req_feats).issubset(on_set)
+                # if dbg:
+                #     self._dbg(
+                #         f"[prov][lhs-check] {idc}->{rhs} "
+                #         f"lhs={list(req_feats)} ok={lhs_ok}"
+                #     ) # too much (just for debugging)
+                if not lhs_ok:
+                    continue
+
                 j = self.col2i.get(rhs)
                 if j is None or m[j] == 1:
                     continue
@@ -2792,11 +2858,19 @@ class RelShapKernelExplainer(KernelExplainer):
                 if len(cand_ids) != 1:
                     continue
 
-                rhs_list = [
-                    c for c in self.prov_index.idcol_to_rhs.get(idc, [])
-                    if (c in self.col2i)
-                ]
-                for rhs in rhs_list:
+                rules = self.prov_index.idcol_to_rules.get(idc, [])
+                for req_feats, req_ids, rhs in rules:
+                    if rhs not in self.col2i:
+                        continue
+                    lhs_ok = set(req_feats).issubset(on_set)
+                    # if dbg:
+                    #     self._dbg(
+                    #         f"[prov][lhs-check] {idc}->{rhs} "
+                    #         f"lhs={list(req_feats)} ok={lhs_ok}"
+                    #     ) # too much (just for debugging)
+                    if not lhs_ok:
+                        continue
+
                     j = self.col2i.get(rhs)
                     if j is None or m[j] == 1:
                         continue
@@ -2825,14 +2899,33 @@ class RelShapKernelExplainer(KernelExplainer):
                 if len(cand_ids) <= thr:
                     continue
 
+                # rule-gated RHS expansion (weak extra)
+                rules = self.prov_index.idcol_to_rules.get(idc, [])
+                allowed_rhs = set()
+                for req_feats, req_ids, rhs in rules:
+                    if rhs not in self.col2i:
+                        continue
+                    lhs_ok = set(req_feats).issubset(on_set)
+                    # if dbg:
+                    #     self._dbg(
+                    #         f"[prov][lhs-check] {idc}->{rhs} "
+                    #         f"lhs={list(req_feats)} ok={lhs_ok}"
+                    #     ) # too much (just for debugging)
+                    if not lhs_ok:
+                        continue
+                    allowed_rhs.add(rhs)
+
                 for rhs in const_rhs:
+                    if rhs not in allowed_rhs:
+                        continue
                     j = self.col2i.get(rhs)
                     if j is None or m[j] == 1:
                         continue
                     m[j] = 1
                     if weak_reasons is not None:
                         weak_reasons.append(
-                            f"[weak-extra] {idc} -> {rhs} (identified_by={list(key_cols)}, cand_ids_n={len(cand_ids)} > thr={thr})"
+                            f"[weak] {idc} -> {rhs} "
+                            f"(identified_by={list(key_cols)}, cand_ids_n={len(cand_ids)}, req_feats_ok=1)"
                         )
 
             if dbg:
@@ -2857,7 +2950,7 @@ class RelShapKernelExplainer(KernelExplainer):
             self._dbg(f"[prov] after  {_summ_mask(self.feature_names, m)}")
             after_cols = [self.feature_names[i] for i in np.flatnonzero(m)]
             if set(after_cols) != set(before_cols or []):
-                because = " ; ".join(reasons[:6]) + (" ..." if reasons and len(reasons) > 6 else "")
+                because = " ; ".join(reasons[-6:]) + (" ..." if reasons and len(reasons) > 6 else "")
                 if not because:
                     because = f"provenance expansion (threshold={thr}, strength={'weak' if is_weak else 'strong'})"
                 _dbg3(
@@ -3716,6 +3809,42 @@ def main():
 
         return {k: sorted(v) for k, v in forward_by_id.items()}
 
+    def build_idcol_to_rules_from_cache(closure_cache, drop_cols, feature_cols):
+        """
+        Build ID -> list of (req_feats, req_ids, rhs) rules
+        from closure_cache.base_cache.
+
+        req_feats : LHS features excluding IDs
+        req_ids   : IDs appearing in LHS
+        rhs       : single feature in closure(lhs) \ lhs
+        """
+        drop_set = set(str(c).strip() for c in drop_cols)
+        feat_set = set(str(c).strip() for c in feature_cols)
+
+        idcol_to_rules = defaultdict(list)
+
+        for lhs, clo in closure_cache.base_cache.items():
+            lhs_set = set(lhs)
+
+            ids = [c for c in lhs_set if c in drop_set]
+            if not ids:
+                continue
+
+            req_feats = [c for c in lhs_set if c in feat_set]
+
+            for rhs in clo:
+                if rhs in lhs_set:
+                    continue
+                if rhs not in feat_set:
+                    continue
+
+                for idc in ids:
+                    idcol_to_rules[idc].append(
+                        (req_feats, ids, rhs)
+                    )
+
+        return dict(idcol_to_rules)
+
     idcol_to_rhs = {}
     if args.mode_provenance is not None:
         if not args.constraints_cache:
@@ -3739,20 +3868,28 @@ def main():
     if args.mode_provenance and len(idcol_to_rhs) > 0:
         df_test_ref = df.loc[X_test.index].copy()
 
+        idcol_to_rules = build_idcol_to_rules_from_cache(
+            closure_cache,
+            drop_cols,
+            feature_cols,
+        )
+
         prov_index = ProvenanceIndex(
             idcol_to_rhs=idcol_to_rhs,
+            idcol_to_rules=idcol_to_rules,
             feature_cols=feature_cols,
             df_ref=df_test_ref,
             drop_cols=drop_cols,
         )
+
         if prov_index is not None:
             prov_index._dbg = _dbg_maker(bool(DEBUG), int(DBG_LIM), int(DBG_EVERY), prefix="[dbg]")
 
         if DEBUG and prov_index is not None:
             print("[prov] idcol_to_rhs keys:", list(idcol_to_rhs.keys()))
-            for k, v in idcol_to_rhs.items():
-                print(f"[prov] {k} -> {v[:12]}{'...' if len(v)>12 else ''}")
-            print("[prov] det_cols:", {k: v[:12] for k, v in prov_index.det_cols.items()})
+            # for k, v in idcol_to_rhs.items(): # does not align with |drop_cols| >=2, redundant!
+            #     print(f"[prov] {k} -> {v[:12]}{'...' if len(v)>12 else ''}")
+            # print("[prov] det_cols:", {k: v[:12] for k, v in prov_index.det_cols.items()})
 
         if len(prov_index.det_cols) == 0:
             print("[mode-provenance] WARNING: no determiners (rhs features) remain after filtering; provenance no-op.")

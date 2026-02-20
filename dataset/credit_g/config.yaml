@@ -7,6 +7,7 @@ LABEL_COL:
   - class
 #JWMNP #MIG #PUBCOV #"ESR" #"ESR"PINCP  # "y" #inPhase # review_score #supplier_risk
 DROP_COLS:
+  - app_id
   # - User_ID
   # - Product_ID
   # - RowNumber

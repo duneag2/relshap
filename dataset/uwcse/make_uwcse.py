@@ -97,7 +97,7 @@ def normalize_mysql_ddl(sql: str) -> str:
     return sql.strip()
 
 # -----------------------
-# ✅ Explicit creation order (from ERD)
+# Explicit creation order (from ERD)
 # -----------------------
 create_order = [
     "person",
