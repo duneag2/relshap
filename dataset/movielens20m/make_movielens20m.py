@@ -37,10 +37,12 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-CSV_DIR = os.path.join(args.base_dir, "movielens20m")
+# CSV_DIR = os.path.join(args.base_dir, "movielens20m")
+CSV_DIR = os.path.join('/Users/seungeun/nyu/relshap2026/copy_safe_feb92pm/dataset/movielens20m', "movielens20m")
 DB_PATH = os.path.join(args.base_dir, args.db)
 SQL_PATH = os.path.join(args.base_dir, args.query)
 CSV_PATH = os.path.join(args.base_dir, args.flattened)
+
 
 paths = {
     "rating": os.path.join(CSV_DIR, "rating.csv"),

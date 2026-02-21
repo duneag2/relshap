@@ -38,7 +38,8 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-CSV_DIR = Path(os.path.join(args.base_dir, "olist"))
+# CSV_DIR = Path(os.path.join(args.base_dir, "olist"))
+CSV_DIR = Path(os.path.join('/Users/seungeun/nyu/relshap2026/copy_safe_feb92pm/dataset/olist', "olist"))
 DB_PATH = os.path.join(args.base_dir, args.db)
 SQL_PATH = os.path.join(args.base_dir, args.query)
 CSV_PATH = os.path.join(args.base_dir, args.flattened)
