@@ -5,28 +5,8 @@
 # LABEL_COLS: the actual ML target
 LABEL_COL:
   - class
-#JWMNP #MIG #PUBCOV #"ESR" #"ESR"PINCP  # "y" #inPhase # review_score #supplier_risk
 DROP_COLS: # may opt to drop phone_number (UNIQUE) but here they key (identifier) is customer_id
   - customer_id
-  # - phone_number
-  # - User_ID
-  # - Product_ID
-  # - RowNumber
-  # - CustomerId
-  # - Surname
-  # - SERIALNO
-  # - SPORDER
-  # - ST
-  # - customer_id
-  # - order_id
-  # - top_tier
-  # - top_unit_price
-  # - n_items
-  # - region
-  # - currency
-  # - channel
-  # - total_qty
-  # - order_total
 
 PROVENANCE_THRESHOLD: 1 # exact mode
 

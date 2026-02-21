@@ -6,7 +6,7 @@ import numpy as np
 import argparse
 
 parser = argparse.ArgumentParser(
-    description="make_churn_modeling"
+    description="make_churn_modelling"
 )
 
 parser.add_argument(

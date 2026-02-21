@@ -26,7 +26,28 @@ SELECT
 
   c.number_customer_service_calls
 FROM Customer AS c
-LEFT JOIN Usage AS d ON d.customer_id = c.customer_id AND d.period = 'DAY'
-LEFT JOIN Usage AS e ON e.customer_id = c.customer_id AND e.period = 'EVE'
-LEFT JOIN Usage AS n ON n.customer_id = c.customer_id AND n.period = 'NIGHT'
-LEFT JOIN Usage AS i ON i.customer_id = c.customer_id AND i.period = 'INTL';
+
+LEFT JOIN Period AS pd
+  ON pd.period = 'DAY'
+LEFT JOIN Usage AS d
+  ON d.customer_id = c.customer_id
+ AND d.period = pd.period
+
+LEFT JOIN Period AS pe
+  ON pe.period = 'EVE'
+LEFT JOIN Usage AS e
+  ON e.customer_id = c.customer_id
+ AND e.period = pe.period
+
+LEFT JOIN Period AS pn
+  ON pn.period = 'NIGHT'
+LEFT JOIN Usage AS n
+  ON n.customer_id = c.customer_id
+ AND n.period = pn.period
+
+LEFT JOIN Period AS pi
+  ON pi.period = 'INTL'
+LEFT JOIN Usage AS i
+  ON i.customer_id = c.customer_id
+ AND i.period = pi.period
+;

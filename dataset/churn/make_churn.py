@@ -107,6 +107,21 @@ FROM raw_churn;
 """)
 
 # -----------------------
+# PERIOD (dimension)
+# -----------------------
+con.execute("""
+DROP TABLE IF EXISTS Period;
+CREATE TABLE Period (
+  period VARCHAR PRIMARY KEY
+);
+""")
+
+con.execute("""
+INSERT INTO Period(period) VALUES
+  ('DAY'), ('EVE'), ('NIGHT'), ('INTL');
+""")
+
+# -----------------------
 # USAGE
 # -----------------------
 con.execute("""
@@ -118,7 +133,8 @@ CREATE TABLE Usage (
   total_calls INTEGER,
   total_charge DOUBLE,
   PRIMARY KEY (customer_id, period),
-  FOREIGN KEY (customer_id) REFERENCES Customer(customer_id)
+  FOREIGN KEY (customer_id) REFERENCES Customer(customer_id),
+  FOREIGN KEY (period) REFERENCES Period(period)
 );
 """)
 

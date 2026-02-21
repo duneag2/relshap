@@ -5,27 +5,8 @@
 # LABEL_COLS: the actual ML target
 LABEL_COL:
   - inPhase
-#JWMNP #MIG #PUBCOV #"ESR" #"ESR"PINCP  # "y" #inPhase # review_score #supplier_risk
 DROP_COLS:
   - p_id
-  # - User_ID
-  # - Product_ID
-  # - RowNumber
-  # - CustomerId
-  # - Surname
-  # - SERIALNO
-  # - SPORDER
-  # - ST
-  # - customer_id
-  # - order_id
-  # - top_tier
-  # - top_unit_price
-  # - n_items
-  # - region
-  # - currency
-  # - channel
-  # - total_qty
-  # - order_total
 
 PROVENANCE_THRESHOLD: 1 # exact mode
 
