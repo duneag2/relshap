@@ -101,9 +101,9 @@ WHERE ROLE_CODE IS NOT NULL;
 # -----------------------
 # MAIN (원본 레코드 유지 + role_code만 FK)
 # -----------------------
-con.execute("DROP TABLE IF EXISTS amazon_employee_access;")
+con.execute("DROP TABLE IF EXISTS Employee;")
 con.execute("""
-CREATE TABLE amazon_employee_access (
+CREATE TABLE Employee (
   row_id   BIGINT PRIMARY KEY,  -- 원본 row 식별자 역할
 
   resource      VARCHAR,
@@ -120,7 +120,7 @@ CREATE TABLE amazon_employee_access (
 """)
 
 con.execute("""
-INSERT INTO amazon_employee_access
+INSERT INTO Employee
 SELECT
   row_id,
 
@@ -139,24 +139,23 @@ FROM raw_amazon_employee_access;
 # -----------------------
 # FLATTEN SQL (네가 말한 "최종 테이블 만드는 쿼리"를 여기서 우리가 생성)
 # -----------------------
-flat_sql = r"""
-SELECT
-  a.row_id,
+flat_sql = r"""SELECT
+  e.row_id,
 
-  a.resource      AS RESOURCE,
-  a.mgr_id        AS MGR_ID,
-  a.role_rollup_1 AS ROLE_ROLLUP_1,
-  a.role_rollup_2 AS ROLE_ROLLUP_2,
-  a.role_deptname AS ROLE_DEPTNAME,
-  a.role_family_desc AS ROLE_FAMILY_DESC,
+  e.resource      AS RESOURCE,
+  e.mgr_id        AS MGR_ID,
+  e.role_rollup_1 AS ROLE_ROLLUP_1,
+  e.role_rollup_2 AS ROLE_ROLLUP_2,
+  e.role_deptname AS ROLE_DEPTNAME,
+  e.role_family_desc AS ROLE_FAMILY_DESC,
 
   r.role_title    AS ROLE_TITLE,
   r.role_family   AS ROLE_FAMILY,
   r.role_code     AS ROLE_CODE
-FROM amazon_employee_access a
-JOIN Role r
-  ON a.role_code = r.role_code
-ORDER BY a.row_id;
+FROM Employee AS e
+JOIN Role AS r
+  ON e.role_code = r.role_code
+ORDER BY e.row_id;
 """
 
 with open(SQL_PATH, "w") as f:
