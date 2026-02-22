@@ -6,7 +6,7 @@
 LABEL_COL:
   - class
 DROP_COLS:
-  - app_id
+  - application_id
 
 PROVENANCE_THRESHOLD: 1 # exact mode
 

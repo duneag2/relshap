@@ -1,5 +1,5 @@
 SELECT
-  p.app_id,
+  p.application_id,
 
   ap.checking_status,
   ap.duration,
@@ -24,4 +24,4 @@ SELECT
 FROM Application ap
 JOIN Applicant p
   ON p.applicant_id = ap.applicant_id
-ORDER BY p.app_id;
+ORDER BY p.application_id;

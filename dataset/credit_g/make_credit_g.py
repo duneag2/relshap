@@ -110,14 +110,14 @@ con.execute("PRAGMA disable_progress_bar;")
 
 
 # -----------------------
-# RAW (with app_id)
+# RAW (with application_id)
 # -----------------------
 con.register("raw_df", df_nolabel)
 con.execute("DROP TABLE IF EXISTS raw_credit_g")
 con.execute("""
 CREATE TABLE raw_credit_g AS
 SELECT
-  row_number() OVER () AS app_id,
+  row_number() OVER () AS application_id,
   *
 FROM raw_df;
 """)
@@ -129,7 +129,7 @@ con.execute("""
 DROP TABLE IF EXISTS Applicant;
 CREATE TABLE Applicant (
   applicant_id INTEGER PRIMARY KEY,
-  app_id INTEGER UNIQUE,             -- 1:1로 둠 (과하지 않게)
+  application_id INTEGER UNIQUE,
 
   personal_status VARCHAR,
   age INTEGER,
@@ -145,8 +145,8 @@ CREATE TABLE Applicant (
 con.execute(f"""
 INSERT INTO Applicant
 SELECT
-  app_id AS applicant_id,
-  app_id,
+  application_id AS applicant_id,
+  application_id,
 
   personal_status::VARCHAR,
   age::INTEGER,
@@ -157,7 +157,7 @@ SELECT
   num_dependents::INTEGER,
   other_parties::VARCHAR
 FROM raw_credit_g
-ORDER BY app_id;
+ORDER BY application_id;
 """)
 
 # -----------------------
@@ -166,8 +166,8 @@ ORDER BY app_id;
 con.execute("""
 DROP TABLE IF EXISTS Application;
 CREATE TABLE Application (
-  app_id INTEGER PRIMARY KEY,
-  applicant_id INTEGER NOT NULL,
+  application_id INTEGER PRIMARY KEY,
+  applicant_id INTEGER NOT NULL UNIQUE,
 
   checking_status VARCHAR,
   credit_history VARCHAR,
@@ -191,8 +191,8 @@ CREATE TABLE Application (
 con.execute("""
 INSERT INTO Application
 SELECT
-  r.app_id,
-  r.app_id AS applicant_id,
+  r.application_id,
+  r.application_id AS applicant_id,
 
   r.checking_status::VARCHAR,
   r.credit_history::VARCHAR,
@@ -209,7 +209,7 @@ SELECT
   r.employment::VARCHAR,
   r.other_payment_plans::VARCHAR
 FROM raw_credit_g r
-ORDER BY r.app_id;
+ORDER BY r.application_id;
 """)
 
 # -----------------------
@@ -226,18 +226,18 @@ flat = con.execute(flat_sql).fetchdf()
 # -----------------------
 # Attach class
 # -----------------------
-# churn은 phone_number로 정렬했지만, credit_g는 자연키 없으니까 app_id로 정렬/복구
-if "app_id" not in flat.columns:
-    raise ValueError("flatten SQL must include app_id for verification/order restoration.")
+# churn은 phone_number로 정렬했지만, credit_g는 자연키 없으니까 application_id 정렬/복구
+if "application_id" not in flat.columns:
+    raise ValueError("flatten SQL must include application_id for verification/order restoration.")
 
-df_sorted = df.copy().reset_index(drop=True)  # 원본 row order가 app_id 1..N과 동일
-flat_sorted = flat.sort_values("app_id").reset_index(drop=True)
+df_sorted = df.copy().reset_index(drop=True)  # 원본 row order가 application_id 1..N과 동일
+flat_sorted = flat.sort_values("application_id").reset_index(drop=True)
 
 flat_sorted["class"] = df_sorted["class"].values
 
 # dtype 맞추기 (churn과 동일)
-# 주의: df_sorted에는 app_id가 없으니, 비교 전 flat에서 app_id drop
-flat_noid = flat_sorted.drop(columns=["app_id"])
+# 주의: df_sorted에는 application_id 없으니, 비교 전 flat에서 application_id drop
+flat_noid = flat_sorted.drop(columns=["application_id"])
 
 for col in flat_noid.columns:
     df_sorted[col] = df_sorted[col].astype(flat_noid[col].dtype)
@@ -249,11 +249,11 @@ print("FINAL VERIFICATION PASSED (including class)")
 # -----------------------
 # Save flattened.csv with original row + column order
 # -----------------------
-# 이미 app_id 기준 정렬 상태 = 원본 row order
+# 이미 application_id 기준 정렬 상태 = 원본 row order
 flat_final = flat_noid[df.columns]
 assert flat_final.shape == df.shape
 
-flat_save = flat_sorted[["app_id"]].join(flat_final)
+flat_save = flat_sorted[["application_id"]].join(flat_final)
 flat_save.to_csv(CSV_PATH, index=False)
 
 print("Saved flattened.csv with original row + column order")
