@@ -129,7 +129,6 @@ con.execute("""
 DROP TABLE IF EXISTS Applicant;
 CREATE TABLE Applicant (
   applicant_id INTEGER PRIMARY KEY,
-  application_id INTEGER UNIQUE,
 
   personal_status VARCHAR,
   age INTEGER,
@@ -146,7 +145,6 @@ con.execute(f"""
 INSERT INTO Applicant
 SELECT
   application_id AS applicant_id,
-  application_id,
 
   personal_status::VARCHAR,
   age::INTEGER,
