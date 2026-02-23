@@ -15,10 +15,10 @@ SELECT
   SUM(oi.qty) OVER (PARTITION BY o.order_id) AS total_qty,
 
   o.order_total,
-FROM orders AS o
-JOIN customer AS c
+FROM Orders AS o
+JOIN Customer AS c
   ON o.customer_id = c.customer_id
-JOIN order_item AS oi
+JOIN Item AS oi
   ON o.order_id = oi.order_id
 WHERE o.order_total >= 0
 QUALIFY

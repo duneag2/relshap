@@ -142,7 +142,7 @@ con = duckdb.connect(DB_PATH)
 # """)
 
 con.execute("""
-CREATE TABLE customer (
+CREATE TABLE Customer (
   customer_id INTEGER PRIMARY KEY,
   age INTEGER,
   gender VARCHAR,
@@ -165,7 +165,7 @@ CREATE TABLE customer (
 """)
 
 con.execute("""
-CREATE TABLE orders (
+CREATE TABLE Orders (
   order_id INTEGER PRIMARY KEY,
   order_code VARCHAR UNIQUE,
   customer_id INTEGER,
@@ -176,7 +176,7 @@ CREATE TABLE orders (
 """)
 
 con.execute("""
-CREATE TABLE order_item (
+CREATE TABLE Item (
   order_id INTEGER,
   line_no INTEGER,
   tier VARCHAR,
@@ -191,9 +191,9 @@ con.register("cust_df", cust_df)
 con.register("ord_df", ord_df)
 con.register("item_df", item_df)
 
-con.execute("INSERT INTO customer SELECT * FROM cust_df")
-con.execute("INSERT INTO orders SELECT * FROM ord_df")
-con.execute("INSERT INTO order_item SELECT * FROM item_df")
+con.execute("INSERT INTO Customer SELECT * FROM cust_df")
+con.execute("INSERT INTO Orders SELECT * FROM ord_df")
+con.execute("INSERT INTO Item SELECT * FROM item_df")
 
 
 with open(SQL_PATH, "r") as f:
