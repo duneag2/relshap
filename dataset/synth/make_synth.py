@@ -171,7 +171,7 @@ CREATE TABLE Orders (
   customer_id INTEGER,
   channel VARCHAR,
   order_total DOUBLE,
-  FOREIGN KEY(customer_id) REFERENCES customer(customer_id)
+  FOREIGN KEY(customer_id) REFERENCES Customer(customer_id)
 );
 """)
 
@@ -183,7 +183,7 @@ CREATE TABLE Item (
   unit_price DOUBLE,
   qty INTEGER,
   PRIMARY KEY(order_id, line_no),
-  FOREIGN KEY(order_id) REFERENCES orders(order_id)
+  FOREIGN KEY(order_id) REFERENCES Orders(order_id)
 );
 """)
 
