@@ -29,6 +29,19 @@ from scipy.special import comb as _binom
 import torch
 import torch.backends.cudnn as cudnn
 
+# NOTE JF: added for caching and parallelization.
+import functools
+import multiprocessing
+from parallel_utils import parallel_loop
+
+# Module-level slot used by _fork_mc_worker (set before pool creation via fork)
+_MC_ROW_FN = None
+
+def _fork_mc_worker(args):
+    """Top-level picklable worker: inherited via fork, not pickled itself."""
+    row_i, seed = args
+    return _MC_ROW_FN(row_i, seed)
+
 def seed_everything(seed: int):
     os.environ["PYTHONHASHSEED"] = str(seed)
     os.environ["SEGMENT_DISABLE"] = "1"
@@ -234,6 +247,94 @@ class ProvenanceIndex:
                 rules_union.extend(self.idcol_to_rules.get(b, []))
                 self.idcol_to_rules[pair_col] = rules_union
 
+        # Pre-build row-index sets for fast multi-intersect (avoids pandas isin in hot path).
+        # Use positional indices (matching _col_arr) rather than label-based df.index values.
+        self._id_row_sets: Dict[str, Dict[Any, frozenset]] = {}
+        for idc in self.drop_set:
+            if idc in self.df_ref.columns:
+                arr = self.df_ref[idc].values
+                id_map: Dict[Any, list] = {}
+                for pos, val in enumerate(arr):
+                    if val not in id_map:
+                        id_map[val] = []
+                    id_map[val].append(pos)
+                self._id_row_sets[idc] = {k: frozenset(v) for k, v in id_map.items()}
+
+        # Pre-store column arrays for fast nunique on row subsets
+        self._col_arr: Dict[str, Any] = {c: self.df_ref[c].values for c in self.df_ref.columns}
+
+        # Inverted index: eliminates per-coalition pandas groupby in get_map.
+        # Built once at init; lookups are O(|key_cols|) frozenset intersections.
+        self._inv: Dict[str, Dict[str, Dict[Any, frozenset]]] = {}
+        self._entity_feat_vals: Dict[str, Dict[Any, Dict[str, frozenset]]] = {}
+        self._build_inv_index()
+
+
+    def _build_inv_index(self):
+        """Build per-feature inverted index for O(|key_cols|) candidate-ID lookup.
+
+        self._inv[idc][feat][canon_feat_val]  -> frozenset of raw idc values
+        self._entity_feat_vals[idc][idc_val][feat] -> frozenset of canon feat values
+        """
+        for idc in self.drop_set:
+            if idc not in self.df_ref.columns:
+                continue
+            idc_arr = self.df_ref[idc].values
+            rhs_set = {c for c in self.idcol_to_rhs.get(idc, [])
+                       if c in self.feat_set and c in self.df_ref.columns}
+
+            feat_inv: Dict[str, Dict[Any, set]] = {}
+            entity_rhs: Dict[Any, Dict[str, set]] = {}
+
+            for feat in self.feature_cols:
+                if feat not in self.df_ref.columns:
+                    continue
+                feat_arr = self.df_ref[feat].values
+                f_to_ids: Dict[Any, set] = {}
+                is_rhs = feat in rhs_set
+
+                for pos in range(len(idc_arr)):
+                    iv = idc_arr[pos]
+                    try:
+                        if pd.isna(iv):
+                            continue
+                    except Exception:
+                        pass
+                    fv = _canon_scalar(feat_arr[pos])
+                    if fv not in f_to_ids:
+                        f_to_ids[fv] = set()
+                    f_to_ids[fv].add(iv)
+
+                    if is_rhs:
+                        if iv not in entity_rhs:
+                            entity_rhs[iv] = {}
+                        if feat not in entity_rhs[iv]:
+                            entity_rhs[iv][feat] = set()
+                        entity_rhs[iv][feat].add(fv)
+
+                feat_inv[feat] = {k: frozenset(v) for k, v in f_to_ids.items()}
+
+            self._inv[idc] = feat_inv
+            self._entity_feat_vals[idc] = {
+                iv: {f: frozenset(vs) for f, vs in feats.items()}
+                for iv, feats in entity_rhs.items()
+            }
+
+    def _compute_const_rhs(self, idcol: str, candidate_ids: set) -> set:
+        """Return RHS features that are constant across all candidate entities."""
+        entity_vals = self._entity_feat_vals.get(idcol, {})
+        rhs_list = [c for c in self.idcol_to_rhs.get(idcol, [])
+                    if c in self.feat_set and c in self.df_ref.columns]
+        const_rhs = set()
+        for feat in rhs_list:
+            all_vals: set = set()
+            for cid in candidate_ids:
+                all_vals |= entity_vals.get(cid, {}).get(feat, set())
+                if len(all_vals) > 1:
+                    break
+            if len(all_vals) == 1:
+                const_rhs.add(feat)
+        return const_rhs
 
     def _build_det_cols(self):
         for idc, rhs_list in self.idcol_to_rhs.items():
@@ -310,24 +411,43 @@ class ProvenanceIndex:
         return tuple(ids_tuple), set(const_rhs)
     
     def infer_ids_from_canon(self, *, idcol: str, key_cols: Tuple[str, ...], x_canon: List[Any], col2i: Dict[str,int], threshold: int):
-        mp = self.get_map(idcol, key_cols)
-        key_vals = tuple(x_canon[col2i[c]] if c in col2i else None for c in key_cols)
-        hit = mp.get(key_vals)
-        if hit is None:
+        inv = self._inv.get(idcol)
+        if not inv:
             return tuple(), set()
-        ids_tuple, const_rhs = hit
-        if 0 < len(ids_tuple) <= int(threshold):
-            return ids_tuple, set(const_rhs)
-        return tuple(), set()
+        candidate_set = None
+        for feat in key_cols:
+            fv = x_canon[col2i[feat]] if feat in col2i else None
+            cands = inv.get(feat, {}).get(fv, frozenset())
+            if candidate_set is None:
+                candidate_set = set(cands)
+            else:
+                candidate_set &= cands
+            if not candidate_set:
+                return tuple(), set()
+        if not candidate_set:
+            return tuple(), set()
+        if not (0 < len(candidate_set) <= int(threshold)):
+            return tuple(), set()
+        return tuple(sorted(candidate_set, key=str)), set()
 
     def infer_ids_and_const_from_canon(self, *, idcol: str, key_cols: Tuple[str, ...], x_canon: List[Any], col2i: Dict[str,int]):
-        mp = self.get_map(idcol, key_cols)
-        key_vals = tuple(x_canon[col2i[c]] if c in col2i else None for c in key_cols)
-        hit = mp.get(key_vals)
-        if hit is None:
+        inv = self._inv.get(idcol)
+        if not inv:
             return tuple(), set()
-        ids_tuple, const_rhs = hit
-        return tuple(ids_tuple), set(const_rhs)
+        candidate_set = None
+        for feat in key_cols:
+            fv = x_canon[col2i[feat]] if feat in col2i else None
+            cands = inv.get(feat, {}).get(fv, frozenset())
+            if candidate_set is None:
+                candidate_set = set(cands)
+            else:
+                candidate_set &= cands
+            if not candidate_set:
+                return tuple(), set()
+        if not candidate_set:
+            return tuple(), set()
+        const_rhs = self._compute_const_rhs(idcol, candidate_set)
+        return tuple(sorted(candidate_set, key=str)), const_rhs
 
 
 # =========================================================
@@ -1247,6 +1367,7 @@ def _ic_parse_domain_value(v: Any) -> Any:
         return s
 
 
+@functools.lru_cache(maxsize=32768)
 def _canon_scalar(x: Any) -> Any:
     """Canonicalize scalar for equality / membership comparisons."""
     if x is None:
@@ -1619,6 +1740,7 @@ class RelShapKernelExplainer(KernelExplainer):
         debug_coal: bool = False,
         debug_coal_limit: int = 5000,
         seed: int,
+        n_jobs: int = -1, # -1 uses all threads; 1 is single-threaded
         **kwargs,
     ):
         super().__init__(model, data, **kwargs)
@@ -1628,6 +1750,7 @@ class RelShapKernelExplainer(KernelExplainer):
         self.debug_coal = bool(debug_coal)
         self.debug_coal_limit = int(debug_coal_limit)
         self.seed = int(seed)
+        self.n_jobs = n_jobs
 
         self._coal_keys_by_mode = defaultdict(list)
 
@@ -1655,6 +1778,8 @@ class RelShapKernelExplainer(KernelExplainer):
         # key: mask_key(before provenance), val: packed mask bytes(after provenance)
         self._prov_cache: Dict[bytes, bytes] = {}
         self._x_canon = None  # optional (for step 3)
+        self._x_canon_key: Optional[bytes] = None   # x.tobytes() of last seen x
+        self._x_canon_val: Optional[List[Any]] = None  # cached x_canon_full list
 
         self.prov_index = provenance_index
         self.prov_strength = str(prov_strength).strip().lower()
@@ -1702,6 +1827,8 @@ class RelShapKernelExplainer(KernelExplainer):
         # IMPORTANT: reset per instance, not per shap_values call
         self._prov_cache = {}
         self._x_canon = None
+        self._x_canon_key = None
+        self._x_canon_val = None
 
         if self.mode_coal_budget:
             self._seen_canon_mask_keys = set()
@@ -1941,13 +2068,9 @@ class RelShapKernelExplainer(KernelExplainer):
                 self._eval_cache[key] = v
             return v
 
-        out = np.zeros((X_np.shape[0], M), dtype=float)
         feat_idx_all = np.arange(M, dtype=int)
 
-        total_work = int(X_np.shape[0]) * int(ns)  # explain-n x n-samples
-        pbar_all = tqdm(total=X_np.shape[0], leave=True) # desc="Monte Carlo",
-
-        for row_i in range(X_np.shape[0]):
+        def _iter_row(row_i: int, seed: int):
             # reset per-instance caches (matches original intent)
             self._prov_cache = {}
             self._x_canon = None
@@ -1960,7 +2083,7 @@ class RelShapKernelExplainer(KernelExplainer):
                 self._budget_skipped = 0
 
             x_full = np.asarray(X_np[row_i], dtype=bg_np.dtype, order="C")
-            rng = np.random.RandomState(base_rng.randint(0, 2**31 - 1))
+            rng = np.random.RandomState(seed)
 
             phi = np.zeros(M, dtype=float)
 
@@ -2018,12 +2141,8 @@ class RelShapKernelExplainer(KernelExplainer):
 
                 added += 1
 
-            pbar_all.update(1)
-
-            
-        
             denom = float(max(1, added))
-            out[row_i, :] = phi / denom
+            row_phi = phi / denom
 
             if self.debug and self.mode_coal_canon:
                 self._dbg(
@@ -2035,8 +2154,40 @@ class RelShapKernelExplainer(KernelExplainer):
                     f"[mc-coal] row={row_i} budget skipped={self._budget_skipped} "
                     f"seen={len(self._seen_canon_mask_keys)} added={added}/{ns}"
                 )
-        pbar_all.close()
-        
+            return row_phi
+            # end of _iter_row
+
+        out = np.zeros((X_np.shape[0], M), dtype=float)
+
+        # pre-draw per-row seeds before any forking
+        seeds = [int(base_rng.randint(0, 2**31 - 1)) for _ in range(X_np.shape[0])]
+
+        n_jobs = getattr(self, "n_jobs", 1) or 1
+        use_parallel = (n_jobs != 1) and (X_np.shape[0] > 1)
+
+        if use_parallel:
+            # fork-based pool: workers inherit the closure (incl. model_fn) via os.fork()
+            # without any pickling. Only the lightweight (row_i, seed) args are sent per task.
+            global _MC_ROW_FN
+            _MC_ROW_FN = _iter_row
+            ctx = multiprocessing.get_context("fork")
+            actual_jobs = multiprocessing.cpu_count() if n_jobs == -1 else n_jobs
+            with ctx.Pool(actual_jobs) as pool:
+                results = list(tqdm(
+                    pool.imap(_fork_mc_worker, [(i, seeds[i]) for i in range(X_np.shape[0])]),
+                    total=X_np.shape[0], leave=True,
+                ))
+        else:
+            pbar = tqdm(total=X_np.shape[0], leave=True)
+            results = []
+            for i in range(X_np.shape[0]):
+                results.append(_iter_row(i, seeds[i]))
+                pbar.update(1)
+            pbar.close()
+
+        for row_i, row_phi in enumerate(results):
+            out[row_i, :] = row_phi
+
         return out
 
     def shap_values_leverage(self, X, *args, **kwargs):
@@ -2142,6 +2293,7 @@ class RelShapKernelExplainer(KernelExplainer):
         # Canonicalize mask from selected columns (FD closure + provenance expansion)
         # ----------------------------
         def _canonize_mask_from_cols(on_cols: tuple, x_full: np.ndarray) -> np.ndarray:
+
             m0 = np.zeros(M, dtype=np.int8)
             for c in on_cols:
                 j = self.col2i.get(c, None)
@@ -2418,8 +2570,7 @@ class RelShapKernelExplainer(KernelExplainer):
             reg = 1.0 / (_binom(M, s) * s * (M - s))
             return float(reg / float(prob))
 
-        for row_i in range(X_np.shape[0]):
-            # IMPORTANT: reset caches per explicand (mirrors your MC logic)
+        def _iter_row(row_i: int):
             self._prov_cache = {}
             self._x_canon = None
             if getattr(self, "mode_coal_canon", False):
@@ -2583,7 +2734,7 @@ class RelShapKernelExplainer(KernelExplainer):
                 if K == 0:
                     out[row_i, :] = (v1 - v0) / float(M)
                     pbar.update(1)
-                    continue
+                    return
 
                 Z_can = np.zeros((K, M), dtype=np.int8)
                 sizes_vec = np.zeros(K, dtype=int)
@@ -2630,11 +2781,16 @@ class RelShapKernelExplainer(KernelExplainer):
             out[row_i, :] = sol + (v1 - v0) / float(M)
 
             pbar.update(1)
+            # end of _iter_row
+
+        parallel_loop(
+            _iter_row,
+            list(range(X_np.shape[0])),
+            n_jobs=self.n_jobs
+        )
 
         pbar.close()
         return out
-
-
 
     def _apply_provenance_mask_expansion(self, m: np.ndarray, x: np.ndarray) -> np.ndarray:
         dbg = bool(getattr(self, "debug", False))
@@ -2654,7 +2810,11 @@ class RelShapKernelExplainer(KernelExplainer):
         k_mask = _mask_key(m)
         on_idx = np.flatnonzero(m)
 
-        x_canon_full = [_canon_scalar(x[i]) for i in range(len(self.feature_names))]
+        x_bytes = x.tobytes()
+        if self._x_canon_key != x_bytes:
+            self._x_canon_key = x_bytes
+            self._x_canon_val = [_canon_scalar(x[i]) for i in range(len(self.feature_names))]
+        x_canon_full = self._x_canon_val
         x_key_on = tuple((int(i), x_canon_full[int(i)]) for i in on_idx)
         k0 = (k_mask, x_key_on)
 
@@ -2745,21 +2905,30 @@ class RelShapKernelExplainer(KernelExplainer):
 
         multi_added = []
         if len(stage0_hits) >= 2:
-            df_sub = self.prov_index.df_ref
+            # Use pre-built row-index sets: intersect row sets for each id's candidate values.
+            row_sets = []
             for (idc, _kcols, cand_ids_t, _const_rhs) in stage0_hits:
-                if idc not in df_sub.columns:
-                    continue
-                df_sub = df_sub[df_sub[idc].isin(cand_ids_t)]
-                if df_sub.shape[0] == 0:
-                    break
+                id_map = self.prov_index._id_row_sets.get(idc, {})
+                s: set = set()
+                for cid in cand_ids_t:
+                    rows = id_map.get(cid)
+                    if rows:
+                        s |= rows
+                row_sets.append(s)
 
-            if df_sub.shape[0] > 0:
+            intersected_rows: set = row_sets[0]
+            for s in row_sets[1:]:
+                intersected_rows = intersected_rows & s
+
+            if intersected_rows:
+                col_arr = self.prov_index._col_arr
                 for (idc, key_cols, _cand_ids_t, const_rhs0) in stage0_hits:
-                    if idc not in df_sub.columns:
+                    if idc not in col_arr:
                         continue
 
                     if not is_weak:
-                        ids_n = int(df_sub[idc].nunique(dropna=False))
+                        idc_arr = col_arr[idc]
+                        ids_n = len({idc_arr[i] for i in intersected_rows if not (isinstance(idc_arr[i], float) and math.isnan(idc_arr[i]))})
                         if not (0 < ids_n <= thr):
                             continue
 
@@ -2769,7 +2938,7 @@ class RelShapKernelExplainer(KernelExplainer):
                                 continue
 
                             # NEW: gate by LHS ⊆ current mask
-                            if not set(req_feats).issubset(on_set):
+                            if not req_feats.issubset(on_set):
                                 continue
 
                             j = self.col2i.get(rhs)
@@ -2788,15 +2957,18 @@ class RelShapKernelExplainer(KernelExplainer):
                             if rhs not in self.col2i:
                                 continue
                             # LHS gating
-                            if not set(req_feats).issubset(on_set):
+                            if not req_feats.issubset(on_set):
                                 continue
 
                             j = self.col2i.get(rhs)
                             if j is None or m[j] == 1:
                                 continue
-                            # optional consistency check in df_sub
-                            if rhs in df_sub.columns and int(df_sub[rhs].nunique(dropna=False)) != 1:
-                                continue
+                            # optional consistency check: rhs is constant across intersected rows
+                            if rhs in col_arr:
+                                rhs_arr = col_arr[rhs]
+                                rhs_vals = {rhs_arr[i] for i in intersected_rows}
+                                if len(rhs_vals) != 1:
+                                    continue
                             m[j] = 1
                             multi_added.append((idc, rhs, key_cols))
                             if reasons is not None:
@@ -2827,7 +2999,7 @@ class RelShapKernelExplainer(KernelExplainer):
                 if rhs not in self.col2i:
                     continue
                 # only use the rule if all required feature-determiners are ON in the mask
-                lhs_ok = set(req_feats).issubset(on_set)
+                lhs_ok = req_feats.issubset(on_set)
                 # if dbg:
                 #     self._dbg(
                 #         f"[prov][lhs-check] {idc}->{rhs} "
@@ -2862,7 +3034,7 @@ class RelShapKernelExplainer(KernelExplainer):
                 for req_feats, req_ids, rhs in rules:
                     if rhs not in self.col2i:
                         continue
-                    lhs_ok = set(req_feats).issubset(on_set)
+                    lhs_ok = req_feats.issubset(on_set)
                     # if dbg:
                     #     self._dbg(
                     #         f"[prov][lhs-check] {idc}->{rhs} "
@@ -2905,7 +3077,7 @@ class RelShapKernelExplainer(KernelExplainer):
                 for req_feats, req_ids, rhs in rules:
                     if rhs not in self.col2i:
                         continue
-                    lhs_ok = set(req_feats).issubset(on_set)
+                    lhs_ok = req_feats.issubset(on_set)
                     # if dbg:
                     #     self._dbg(
                     #         f"[prov][lhs-check] {idc}->{rhs} "
@@ -3840,7 +4012,7 @@ def main():
 
                 for idc in ids:
                     idcol_to_rules[idc].append(
-                        (req_feats, ids, rhs)
+                        (frozenset(req_feats), ids, rhs)
                     )
 
         return dict(idcol_to_rules)

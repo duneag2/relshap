@@ -2,7 +2,7 @@
 set -e
 
 export HF_TOKEN="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" # for TabPFN
-export TABPFN_MODEL_CACHE_DIR="/Users/seungeun/nyu/relshap2026/tabpfn_weights" # where to store TabPFN weights
+export TABPFN_MODEL_CACHE_DIR="/home/joaofonseca/40-Work/41-Research/41.08-relshap/tabpfn_weights" # where to store TabPFN weights
 export TABPFN_DISABLE_TELEMETRY=1
 
 # To Joao: use synth - xgboost for development purpose
@@ -15,7 +15,7 @@ DATASET="synth"
 # Synthetic datasets: synth
 # ML-side (w.o. meaninful relational constraints, just to check): diabetes
 
-BASE_DIR="/Users/seungeun/nyu/relshap2026/relshap/dataset/$DATASET" # base dir
+BASE_DIR="/home/joaofonseca/40-Work/41-Research/41.08-relshap/dataset/$DATASET" # base dir
 SEED=2026
 DB="$DATASET.duckdb" # Do not support CTEs; Use QUALIFY in the duckdb dialect
 QUERY="$DATASET.sql"
