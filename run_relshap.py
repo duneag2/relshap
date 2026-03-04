@@ -29,7 +29,9 @@ from scipy.special import comb as _binom
 import torch
 import torch.backends.cudnn as cudnn
 
+# NOTE JF: added for caching and parallelization.
 import functools
+from parallel_utils import parallel_loop
 
 def seed_everything(seed: int):
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -1729,6 +1731,7 @@ class RelShapKernelExplainer(KernelExplainer):
         debug_coal: bool = False,
         debug_coal_limit: int = 5000,
         seed: int,
+        n_jobs: int = 1, # -1 uses all threads; 1 is single-threaded
         **kwargs,
     ):
         super().__init__(model, data, **kwargs)
@@ -1738,6 +1741,7 @@ class RelShapKernelExplainer(KernelExplainer):
         self.debug_coal = bool(debug_coal)
         self.debug_coal_limit = int(debug_coal_limit)
         self.seed = int(seed)
+        self.n_jobs = n_jobs
 
         self._coal_keys_by_mode = defaultdict(list)
 
@@ -2061,7 +2065,7 @@ class RelShapKernelExplainer(KernelExplainer):
         total_work = int(X_np.shape[0]) * int(ns)  # explain-n x n-samples
         pbar_all = tqdm(total=X_np.shape[0], leave=True) # desc="Monte Carlo",
 
-        for row_i in range(X_np.shape[0]):
+        def _iter_row(row_i: int):
             # reset per-instance caches (matches original intent)
             self._prov_cache = {}
             self._x_canon = None
@@ -2137,7 +2141,7 @@ class RelShapKernelExplainer(KernelExplainer):
             
         
             denom = float(max(1, added))
-            out[row_i, :] = phi / denom
+            row_phi = phi / denom
 
             if self.debug and self.mode_coal_canon:
                 self._dbg(
@@ -2149,6 +2153,17 @@ class RelShapKernelExplainer(KernelExplainer):
                     f"[mc-coal] row={row_i} budget skipped={self._budget_skipped} "
                     f"seen={len(self._seen_canon_mask_keys)} added={added}/{ns}"
                 )
+            return row_phi
+            # end of _iter_row
+
+        results = parallel_loop(
+            _iter_row, 
+            list(range(X_np.shape[0])), 
+            n_jobs=self.n_jobs
+        )
+        for row_i, row_phi in enumerate(results):
+            out[row_i, :] = row_phi
+
         pbar_all.close()
         
         return out
@@ -2533,7 +2548,7 @@ class RelShapKernelExplainer(KernelExplainer):
             reg = 1.0 / (_binom(M, s) * s * (M - s))
             return float(reg / float(prob))
 
-        for row_i in range(X_np.shape[0]):
+        def _iter_row(row_i: int):
             # IMPORTANT: reset caches per explicand (mirrors your MC logic)
             self._prov_cache = {}
             self._x_canon = None
@@ -2698,7 +2713,7 @@ class RelShapKernelExplainer(KernelExplainer):
                 if K == 0:
                     out[row_i, :] = (v1 - v0) / float(M)
                     pbar.update(1)
-                    continue
+                    return
 
                 Z_can = np.zeros((K, M), dtype=np.int8)
                 sizes_vec = np.zeros(K, dtype=int)
@@ -2745,6 +2760,13 @@ class RelShapKernelExplainer(KernelExplainer):
             out[row_i, :] = sol + (v1 - v0) / float(M)
 
             pbar.update(1)
+            # end of _iter_row
+
+        parallel_loop(
+            _iter_row,
+            list(range(X_np.shape[0])),
+            n_jobs=self.n_jobs
+        )
 
         pbar.close()
         return out
