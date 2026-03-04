@@ -173,6 +173,7 @@ def main():
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--model", required=True, choices=sorted(MODEL_REGISTRY.keys()))
     parser.add_argument("--model-out", required=True)
+    parser.add_argument("--pred-out", required=True)
     parser.add_argument("--tune", action="store_true")
     parser.add_argument("--n-iter", type=int, default=25)
     parser.add_argument("--cv", type=int, default=3)
@@ -433,6 +434,29 @@ def main():
     out_path = Path(args.model_out)
     out_dir = out_path.parent if out_path.suffix else out_path
     _save_model(out_dir, model_name=spec.name, ts=args.ts, save_format=spec.save_format, obj=model)
+
+    df_test_pred = pd.DataFrame({
+        "y_true": y_test,
+        "y_pred": y_pred
+    })
+
+    if proba is not None:
+        if proba.shape[1] == 2:
+            df_test_pred["proba_0"] = proba[:, 0]
+            df_test_pred["proba_1"] = proba[:, 1]
+        else:
+            # multi-class
+            for i in range(proba.shape[1]):
+                df_test_pred[f"proba_{i}"] = proba[:, i]
+
+    save_dir = args.pred_out
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(
+        args.pred_out,
+        f"{spec.name}_{args.ts}.csv"
+    )
+
+    df_test_pred.to_csv(save_path, index=False)
 
 
 if __name__ == "__main__":

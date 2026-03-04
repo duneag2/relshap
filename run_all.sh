@@ -127,6 +127,7 @@ python -u run_model.py \
   --config "$CONFIG" \
   --model $MODEL \
   --model-out "$BASE_DIR/models" \
+  --pred-out "$BASE_DIR/predictions" \
   --tune \
   --n-iter 10 \
   --cv 2 \
