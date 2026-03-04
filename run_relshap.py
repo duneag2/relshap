@@ -31,7 +31,16 @@ import torch.backends.cudnn as cudnn
 
 # NOTE JF: added for caching and parallelization.
 import functools
+import multiprocessing
 from parallel_utils import parallel_loop
+
+# Module-level slot used by _fork_mc_worker (set before pool creation via fork)
+_MC_ROW_FN = None
+
+def _fork_mc_worker(args):
+    """Top-level picklable worker: inherited via fork, not pickled itself."""
+    row_i, seed = args
+    return _MC_ROW_FN(row_i, seed)
 
 def seed_everything(seed: int):
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -1731,7 +1740,7 @@ class RelShapKernelExplainer(KernelExplainer):
         debug_coal: bool = False,
         debug_coal_limit: int = 5000,
         seed: int,
-        n_jobs: int = 1, # -1 uses all threads; 1 is single-threaded
+        n_jobs: int = -1, # -1 uses all threads; 1 is single-threaded
         **kwargs,
     ):
         super().__init__(model, data, **kwargs)
@@ -2059,13 +2068,9 @@ class RelShapKernelExplainer(KernelExplainer):
                 self._eval_cache[key] = v
             return v
 
-        out = np.zeros((X_np.shape[0], M), dtype=float)
         feat_idx_all = np.arange(M, dtype=int)
 
-        total_work = int(X_np.shape[0]) * int(ns)  # explain-n x n-samples
-        pbar_all = tqdm(total=X_np.shape[0], leave=True) # desc="Monte Carlo",
-
-        def _iter_row(row_i: int):
+        def _iter_row(row_i: int, seed: int):
             # reset per-instance caches (matches original intent)
             self._prov_cache = {}
             self._x_canon = None
@@ -2078,7 +2083,7 @@ class RelShapKernelExplainer(KernelExplainer):
                 self._budget_skipped = 0
 
             x_full = np.asarray(X_np[row_i], dtype=bg_np.dtype, order="C")
-            rng = np.random.RandomState(base_rng.randint(0, 2**31 - 1))
+            rng = np.random.RandomState(seed)
 
             phi = np.zeros(M, dtype=float)
 
@@ -2136,10 +2141,6 @@ class RelShapKernelExplainer(KernelExplainer):
 
                 added += 1
 
-            pbar_all.update(1)
-
-            
-        
             denom = float(max(1, added))
             row_phi = phi / denom
 
@@ -2156,16 +2157,37 @@ class RelShapKernelExplainer(KernelExplainer):
             return row_phi
             # end of _iter_row
 
-        results = parallel_loop(
-            _iter_row, 
-            list(range(X_np.shape[0])), 
-            n_jobs=self.n_jobs
-        )
+        out = np.zeros((X_np.shape[0], M), dtype=float)
+
+        # pre-draw per-row seeds before any forking
+        seeds = [int(base_rng.randint(0, 2**31 - 1)) for _ in range(X_np.shape[0])]
+
+        n_jobs = getattr(self, "n_jobs", 1) or 1
+        use_parallel = (n_jobs != 1) and (X_np.shape[0] > 1)
+
+        if use_parallel:
+            # fork-based pool: workers inherit the closure (incl. model_fn) via os.fork()
+            # without any pickling. Only the lightweight (row_i, seed) args are sent per task.
+            global _MC_ROW_FN
+            _MC_ROW_FN = _iter_row
+            ctx = multiprocessing.get_context("fork")
+            actual_jobs = multiprocessing.cpu_count() if n_jobs == -1 else n_jobs
+            with ctx.Pool(actual_jobs) as pool:
+                results = list(tqdm(
+                    pool.imap(_fork_mc_worker, [(i, seeds[i]) for i in range(X_np.shape[0])]),
+                    total=X_np.shape[0], leave=True,
+                ))
+        else:
+            pbar = tqdm(total=X_np.shape[0], leave=True)
+            results = []
+            for i in range(X_np.shape[0]):
+                results.append(_iter_row(i, seeds[i]))
+                pbar.update(1)
+            pbar.close()
+
         for row_i, row_phi in enumerate(results):
             out[row_i, :] = row_phi
 
-        pbar_all.close()
-        
         return out
 
     def shap_values_leverage(self, X, *args, **kwargs):
@@ -2549,7 +2571,6 @@ class RelShapKernelExplainer(KernelExplainer):
             return float(reg / float(prob))
 
         def _iter_row(row_i: int):
-            # IMPORTANT: reset caches per explicand (mirrors your MC logic)
             self._prov_cache = {}
             self._x_canon = None
             if getattr(self, "mode_coal_canon", False):
