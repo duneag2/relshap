@@ -256,6 +256,8 @@ def main():
         X, y, test_size=0.2, random_state=SEED, stratify=y
     )
 
+    test_index = X_test.index
+
     if args.model == "mlp_plr":
         estimator.set_params(n_num_features=len(num_cols))
 
@@ -436,6 +438,7 @@ def main():
     _save_model(out_dir, model_name=spec.name, ts=args.ts, save_format=spec.save_format, obj=model)
 
     df_test_pred = pd.DataFrame({
+        "row_id": test_index,
         "y_true": y_test,
         "y_pred": y_pred
     })
