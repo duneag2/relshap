@@ -4088,6 +4088,18 @@ def main():
               f"IC_domain={args.mode_domain} IC_denial={args.mode_denial} "
               f"nsamples={args.nsamples} bg_n={bg.shape[0]} explain_n={ex.shape[0]} M={len(feature_cols)}")
 
+    # ---------------------------------------------------------
+    # Fallback: budget-preserving mode only when nsamples is smaller than the full coalition count 2^(|F|-1)
+    # ---------------------------------------------------------
+
+    full_coalitions = 2 ** (len(feature_cols) - 1)
+    use_budget_mode = args.mode_coalition_budget
+    if args.mode_coalition_budget and args.nsamples >= full_coalitions:
+        print(
+            f"[fallback] disabling budget-preserving mode (already using the full # of coalitions): "
+            f"nsamples={args.nsamples} >= full coalition count={full_coalitions}"
+        )
+        use_budget_mode = False
 
     explainer = RelShapKernelExplainer(
         model=f_proba_pos,
@@ -4095,7 +4107,7 @@ def main():
         feature_names=feature_cols,
         mode_bg=args.mode_bg,
         mode_coal_canon=args.mode_coalition_canon,
-        mode_coal_budget=args.mode_coalition_budget,
+        mode_coal_budget=use_budget_mode,
         budget_max_skips=args.budget_max_skips,
         closure_cache=closure_cache,
         link="identity",
