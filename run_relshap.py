@@ -3875,7 +3875,7 @@ def main():
         raise ValueError("Loaded model does not have predict_proba(). Expected a sklearn Pipeline classifier.")
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=2026, stratify=y
+        X, y, test_size=0.2, random_state=SEED, stratify=y
     )
     # print(len(y_test))
     y_pred = model.predict(X_test)
