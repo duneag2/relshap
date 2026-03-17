@@ -110,7 +110,7 @@ def _load_csv(csv_path: str, discovery: str, config_path: str, seed) -> pd.DataF
         y = df[label_col].to_numpy().ravel()
         SEED = seed
 
-        X_train, _, _, _ = train_test_split(X, y, test_size=0.2, random_state=SEED, stratify=y)
+        X_train, _, _, _ = train_test_split(X, y, test_size=0.2, random_state=2026, stratify=y)
         
         df = X_train
 
