@@ -17,6 +17,7 @@ DATASET="synth"
 
 BASE_DIR="/home/joaofonseca/40-Work/41-Research/41.08-relshap/dataset/$DATASET" # base dir
 SEED=2026
+DATA_SPLIT_SEED=2026
 DB="$DATASET.duckdb" # Do not support CTEs; Use QUALIFY in the duckdb dialect
 QUERY="$DATASET.sql"
 FLATTENED="flattened_$DATASET.csv"
@@ -89,6 +90,7 @@ python constraint_data.py \
   --denial-constraint-d "$DENIAL_CONSTRAINT_D" \
   --discovery "$DISCOVERY" \
   --seed "$SEED" \
+  --data-split-seed "$DATA_SPLIT_SEED" \
   > "$LOG_DIR/constraint_data.out" \
   2> "$LOG_DIR/constraint_data.err"
 
@@ -132,6 +134,7 @@ python -u run_model.py \
   --n-iter 10 \
   --cv 2 \
   --ts $TS \
+  --data-split-seed "$DATA_SPLIT_SEED" \
   > "$LOG_DIR/run_model.out" \
   2> "$LOG_DIR/run_model.err"
 
@@ -173,6 +176,7 @@ python -u run_model.py \
 python -u run_relshap.py \
   --base-dir "$BASE_DIR" \
   --seed "$SEED" \
+  --data-split-seed "$DATA_SPLIT_SEED" \
   --flattened "$FLATTENED" \
   --config "$CONFIG" \
   --constraints-cache "$CONSTRAINTS_CACHE" \

@@ -169,6 +169,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-dir", required=True)
     parser.add_argument("--seed", required=True)
+    parser.add_argument("--data-split-seed", required=True)
     parser.add_argument("--flattened", required=True)
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--model", required=True, choices=sorted(MODEL_REGISTRY.keys()))
@@ -253,7 +254,7 @@ def main():
 
     # ===== train/test split =====
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=2026, stratify=y
+        X, y, test_size=0.2, random_state=int(args.data_split_seed), stratify=y
     )
 
     test_index = X_test.index
