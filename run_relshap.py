@@ -2177,6 +2177,19 @@ class RelShapKernelExplainer(KernelExplainer):
                     pool.imap(_fork_mc_worker, [(i, seeds[i]) for i in range(X_np.shape[0])]),
                     total=X_np.shape[0], leave=True,
                 ))
+            
+            # NYU HPC Torch only
+            # def _iter_row_thread(row_i):
+            #     return _iter_row(row_i, seeds[row_i])
+
+            # results = parallel_loop(
+            #     _iter_row_thread,
+            #     list(range(X_np.shape[0])),
+            #     n_jobs=n_jobs,
+            #     progress_bar=True,
+            #     description="shap_values_mc",
+            #     backend="threading",
+            # )
         else:
             pbar = tqdm(total=X_np.shape[0], leave=True)
             results = []

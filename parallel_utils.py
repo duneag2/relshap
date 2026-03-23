@@ -72,7 +72,7 @@ def _tqdm_joblib(tqdm_object):
 
 
 def parallel_loop(
-    function, iterable, n_jobs=None, progress_bar=False, description=None, backend="loky"
+    function, iterable, n_jobs=None, progress_bar=False, description=None, backend="loky" # backend="threading" for NYU HPC Torch
 ):
     """
     Parallelize a loop and optionally add a progress bar.
