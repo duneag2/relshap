@@ -3217,11 +3217,23 @@ class RelShapKernelExplainer(KernelExplainer):
           5) proceed with super().addsample
         """
 
+        # if not self.mode_bg:
+        #     if self.mode_provenance:
+        #         m = self._ensure_full_mask_and_x(m, x)
+        #         if self.mode_provenance and self.prov_index is not None:
+        #             m = self._apply_provenance_mask_expansion(m, x)
+
+        #     return super().addsample(x, m, w, *args, **kwargs)
+
         if not self.mode_bg:
             if self.mode_provenance:
                 m = self._ensure_full_mask_and_x(m, x)
                 if self.mode_provenance and self.prov_index is not None:
                     m = self._apply_provenance_mask_expansion(m, x)
+
+            varying = self._get_varying_inds()
+            if np.asarray(m).reshape(-1).size == len(self.feature_names):
+                m = np.asarray(m).reshape(-1)[varying].astype(np.int8, copy=False)
 
             return super().addsample(x, m, w, *args, **kwargs)
 
@@ -3375,6 +3387,11 @@ class RelShapKernelExplainer(KernelExplainer):
 
 
                     # add the *replacement* sample using same x and w
+                    # return super().addsample(x, m2, w, *args, **kwargs)
+                    varying = self._get_varying_inds()
+                    if np.asarray(m2).reshape(-1).size == len(self.feature_names):
+                        m2 = np.asarray(m2).reshape(-1)[varying].astype(np.int8, copy=False)
+
                     return super().addsample(x, m2, w, *args, **kwargs)
 
                 # 256 trials -> no match then drop
@@ -3697,7 +3714,7 @@ def main():
     # coalition options (mutually exclusive; require bg)
     parser.add_argument("--mode-coalition-canon", action="store_true")
     parser.add_argument("--mode-coalition-budget", action="store_true")
-    parser.add_argument("--budget-max-skips", type=int, default=500)
+    parser.add_argument("--budget-max-skips", type=int, default=5000)
 
     # NEW: IC modes (independent)
     parser.add_argument("--mode-domain", action="store_true")
