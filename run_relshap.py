@@ -2178,7 +2178,7 @@ class RelShapKernelExplainer(KernelExplainer):
                     total=X_np.shape[0], leave=True,
                 ))
             
-            # NYU HPC Torch only
+            # For NYU HPC Torch (from `actual_jobs` to `with ctx.Pool`)
             # def _iter_row_thread(row_i):
             #     return _iter_row(row_i, seeds[row_i])
 
