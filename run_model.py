@@ -257,6 +257,21 @@ def main():
         X, y, test_size=0.2, random_state=int(args.data_split_seed), stratify=y
     )
 
+    # [OOM] movielens20m, olist
+    dataset_name = Path(args.base_dir).name
+    frac_map = {
+        "movielens20m": 0.025,
+        "olist": 0.25,
+    }
+    if dataset_name in ("movielens20m", "olist") and args.model != "xgboost":
+        sampled_pos = pd.Series(np.arange(len(X_train))).sample(
+            frac=frac_map[dataset_name],
+            random_state=SEED
+        ).to_numpy()
+
+        X_train = X_train.iloc[sampled_pos]
+        y_train = y_train[sampled_pos]
+
     test_index = X_test.index
 
     if args.model == "mlp_plr":
