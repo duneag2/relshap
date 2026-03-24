@@ -2178,18 +2178,6 @@ class RelShapKernelExplainer(KernelExplainer):
                     total=X_np.shape[0], leave=True,
                 ))
             
-            # For NYU HPC Torch (from `actual_jobs` to `with ctx.Pool`)
-            # def _iter_row_thread(row_i):
-            #     return _iter_row(row_i, seeds[row_i])
-
-            # results = parallel_loop(
-            #     _iter_row_thread,
-            #     list(range(X_np.shape[0])),
-            #     n_jobs=n_jobs,
-            #     progress_bar=True,
-            #     description="shap_values_mc",
-            #     backend="threading",
-            # )
         else:
             pbar = tqdm(total=X_np.shape[0], leave=True)
             results = []
