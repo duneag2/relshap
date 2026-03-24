@@ -30,4 +30,7 @@ GROUP BY
   p.student,
   p.inPhase,
   p.yearsInProgram
+
+ORDER BY
+  p.p_id
 ;
