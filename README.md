@@ -1,4 +1,4 @@
-# RelShap
+# RelShap: Relationally Consistent Shapley Explanations
 
 ## Setup
 
