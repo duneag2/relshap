@@ -2,21 +2,21 @@
 set -e
 
 export HF_TOKEN="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" # for TabPFN
-export TABPFN_MODEL_CACHE_DIR="/home/joaofonseca/40-Work/41-Research/41.08-relshap/tabpfn_weights" # where to store TabPFN weights
+export TABPFN_MODEL_CACHE_DIR="/Users/seungeun/nyu/relshap2026/tabpfn_weights" # where to store TabPFN weights
 export TABPFN_DISABLE_TELEMETRY=1
 
 # To Joao: use synth - xgboost for development purpose
 # You don't need to check other files; just check run_relshap.py
 
-DATASET="synth"
+DATASET="amazon_employee_access"
 # ML-side datasets: acs, amazon_employee_access, churn, churn_modelling, credit_g, speeddating
 # DB-side datasets: movielens20m, olist, tpch, uwcse 
 # (Note. movielens20m and olist is not available in github since file is too large)
 # Synthetic datasets: synth
 # ML-side (w.o. meaninful relational constraints, just to check): diabetes
 
-BASE_DIR="/home/joaofonseca/40-Work/41-Research/41.08-relshap/dataset/$DATASET" # base dir
-SEED=2026
+BASE_DIR="/Users/seungeun/nyu/relshap2026/relshap/dataset/$DATASET" # base dir
+SEED=2024
 DATA_SPLIT_SEED=2026
 DB="$DATASET.duckdb" # Do not support CTEs; Use QUALIFY in the duckdb dialect
 QUERY="$DATASET.sql"
@@ -38,7 +38,7 @@ DOMAIN_Q="conditional_domain_constraint_q.csv"
 DOMAIN_CONSTRAINT_D="domain_constraint.csv"
 DENIAL_CONSTRAINT_D="denial_constraint.csv"
 
-DISCOVERY="train" # train or full
+DISCOVERY="full" # train or full
 LUT="train" # train or full
 
 CONSTRAINTS_CACHE="constraints_cache.pkl"
@@ -181,14 +181,14 @@ python -u run_relshap.py \
   --config "$CONFIG" \
   --constraints-cache "$CONSTRAINTS_CACHE" \
   --model-path "$BASE_DIR/models/${MODEL}_${TS}" \
-  --background-n 200 \
-  --explain-n 100 \
-  --nsamples 100 \
-  --base-mode mc \
+  --background-n 80 \
+  --explain-n 20 \
+  --nsamples 4 \
+  --base-mode kernel \
+  --mode-bg \
+  --mode-provenance bg-only \
+  --prov-strength weak \
   --bg-lut "$LUT" \
-  --mode-provenance bg-coalition-canon \
-  --prov-strength strong \
-  --debug \
   --out "$TS" \
   > "$LOG_DIR/run_relshap.out" \
   2> "$LOG_DIR/run_relshap.err"
