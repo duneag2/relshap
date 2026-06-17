@@ -1,7 +1,32 @@
-To João, 
+# RelShap
 
-1. You can start by installing packages in `requirements.txt` and running `bash run_all.sh` (Detailed instructions written inside `run_all.sh` file)
-2. For the provenance mode, please take a look at `ProvenanceIndex` and `_apply_provenance_mask_expansion` in `run_relshap.py`.
-3. Please let me know if you have any questions :)
+## Setup
 
-- Seungeun
+Install the Python dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Run
+
+```bash
+bash run_all.sh
+```
+
+Most experiment settings are configured in `run_all.sh`, including the dataset, model, random seeds, and RelShap options.
+
+## Main Files
+
+- `run_all.sh`: runs the full experiment pipeline.
+- `run_model.py`: trains and saves ML/DL models.
+- `run_relshap.py`: computes RelShap explanations.
+- `constraint_schema.py`: extracts constraints from the database schema.
+- `constraint_query.py`: extracts constraints from SQL queries.
+- `constraint_data.py`: extracts constraints from data.
+- `fd_ic_refinement.py`: combines and refines constraints.
+- `dataset/`: dataset-specific scripts, SQL files, configs, logs, and outputs.
+
+## Notes
+
+- Logs are written under each dataset's `logs/` directory.
